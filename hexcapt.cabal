@@ -1,0 +1,29 @@
+name:                hexcapt
+version:             0.5.0.0
+synopsis:            HEXResearch Captive Portal wannabe 
+description:         Please see README.md
+homepage:            https://github.com/voidlizard/hexcapt#readme
+license:             AllRightsReserved
+license-file:        LICENSE
+author:              Dmitry Zuikov
+maintainer:          dzuikov@gmail.com 
+copyright:           2016 Dmitry Zuikov
+category:            Network
+build-type:          Simple
+cabal-version:       >=1.10
+
+executable hexcapt
+  hs-source-dirs:      app, src
+
+  main-is:             HexCapt.hs
+  ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
+
+  default-language:    Haskell2010
+  build-depends:       base
+                     , aeson
+                     , async
+                     , attoparsec
+                     , interpolatedstring-perl6
+                     , text
+                     , turtle
+                     , yaml
