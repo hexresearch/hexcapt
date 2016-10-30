@@ -1,0 +1,12 @@
+ndnproxy:
+    - instance:
+        tcp-port: 10053
+        udp-port: 10053
+        marks: [0]
+
+    - instance:
+        tcp-port: 10153
+        udp-port: 10153
+        marks: [1]
+        upstream-dns:
+            '.' : [8.8.8.8]

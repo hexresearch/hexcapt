@@ -23,7 +23,13 @@ executable hexcapt
                      , aeson
                      , async
                      , attoparsec
+                     , containers
+                     , foldl
                      , interpolatedstring-perl6
+                     , lens
+                     , mtl
                      , text
+                     , transformers
                      , turtle
+                     , uniplate
                      , yaml
