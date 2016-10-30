@@ -3,6 +3,11 @@ ndnproxy:
         tcp-port: 10053
         udp-port: 10053
         marks: [0]
+        static-a:
+            - [facebook.com, 127.0.0.1]
+            - [google.com, 127.0.0.1]
+            - [yandex.ru, 127.0.0.1]
+            - [vk.com, 127.0.0.1]
 
     - instance:
         tcp-port: 10153
@@ -10,3 +15,5 @@ ndnproxy:
         marks: [1]
         upstream-dns:
             '.' : [8.8.8.8]
+        static-a:
+            - [someshit.local, 127.0.0.1]

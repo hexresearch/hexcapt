@@ -28,6 +28,7 @@ executable hexcapt
                      , interpolatedstring-perl6
                      , lens
                      , mtl
+                     , process
                      , text
                      , transformers
                      , turtle

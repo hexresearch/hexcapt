@@ -26,7 +26,8 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
 import qualified Data.Text.IO as IO
-import Text.InterpolatedString.Perl6 (qc,qq)
+import System.Process
+import Text.InterpolatedString.Perl6 (qc,qq,q)
 import Turtle hiding (Parser)
 
 
@@ -40,15 +41,22 @@ class NDNProxyConfig a where
   ndnpListenTCP  = ndnpListenUDP
   ndnpUpstreamDNS :: a -> [(String,String)]
 
+  ndnpStaticA :: a -> [(String,String)]
+  ndnpStaticA _ = []
+
 
 data DNSServer = DNSServer (Maybe String) String
                  deriving (Show,Eq,Generic,Data,Typeable)
 
 
+data StaticAddr = StaticAddr String String
+                  deriving (Show,Eq,Generic,Data,Typeable)
+
 data NDNProxyCfg = NDNProxyCfg { nListenTCP :: Int
                                , nListenUDP :: Int
                                , nMarks     :: [Int]
                                , nUpstreamDNS :: [DNSServer]
+                               , nStaticA :: [StaticAddr]
                                } deriving (Show,Eq,Generic,Data,Typeable)
 
 data HexCaptCfg = HexCaptCfg { ndnproxy :: [NDNProxyCfg]
@@ -70,6 +78,7 @@ instance FromJSON NDNProxyCfg where
                            <*> ((v .: "instance") >>= (.: "udp-port"))
                            <*> ((v .: "instance") >>= (.: "marks"))
                            <*> ((v .: "instance") >>= (.:? "upstream-dns") >>= parseUpstreamDNS)
+                           <*> ((v .: "instance") >>= (.:? "static-a") >>= parseStaticAddr)
 
   parseJSON _          = empty
 
@@ -81,6 +90,14 @@ parseUpstreamDNS (Just o) = do
   return $ foldMap (\(k,v) -> fmap (DNSServer (Just k)) v) (M.toList mdns)
 
 parseUpstreamDNS Nothing = return []
+
+parseStaticAddr :: Maybe Value -> Parser [StaticAddr]
+
+parseStaticAddr (Just o) = do
+  maddr <- parseJSON o :: Parser [(String,String)]
+  return $ fmap (uncurry StaticAddr) maddr
+
+parseStaticAddr Nothing = mzero
 
 
 instance FromJSON HexCaptCfg where
@@ -97,6 +114,9 @@ ndnproxyConfigAsText c = str
     dnsServers = T.intercalate "\n" $ map dnss (ndnpUpstreamDNS c)
     dnss (s,d) = T.concat ["dns_server = ", (T.pack s), " ", (T.pack d)]
 
+    staticA = T.intercalate "\n" $ map a (ndnpStaticA c)
+    a (d,addr) = T.concat ["static_a = ", (T.pack d), " ", (T.pack addr)]
+
     str = [qc|
 rpc_port = 0
 timeout = 7001
@@ -106,35 +126,29 @@ ban_threshold = {ndnpBanTreshhold c}
 
 {dnsServers}
 
+{staticA}
+
 dns_tcp_port = {ndnpListenTCP c}
 dns_udp_port = {ndnpListenUDP c}
 |]
 
 
-instance NDNProxyConfig () where
-  ndnpListenTCP _ = 10053
-  ndnpListenUDP _ = 10053
-  ndnpUpstreamDNS _ = [ ("8.8.8.8", ".")
-                      , ("8.8.4.4", ".")
-                      ]
-
-
 instance NDNProxyConfig NDNProxyCfg where
   ndnpListenTCP = nListenTCP
   ndnpListenUDP = nListenUDP
+  ndnpStaticA   = fmap (\(StaticAddr a b) -> (a,b)) . nStaticA
   ndnpUpstreamDNS c = fmap trdns (nUpstreamDNS c)
     where trdns (DNSServer Nothing s)  = (s,".")
           trdns (DNSServer (Just p) s) = (s,p)
 
 procNDNProxy :: (MonadIO io, NDNProxyConfig cfg) => cfg -> io ()
-procNDNProxy cfg = forever $ sh $ do
+procNDNProxy cfg = sh $ do
     fname' <- mktempfile "/tmp" "ndnproxy-conf"
     output fname' (return (ndnproxyConfigAsText cfg))
     let fname = format fp fname'
     stdout (return fname)
     stdout (return "\n")
     procs "ndnproxy" ["-c", fname] ""
-
 
 data RNorm = RNorm { resolvConf :: [DNSServer] }
 
@@ -178,23 +192,35 @@ normalizeConfig cfg = do
                   _                    -> Nothing
 
 
+iptablesDNAT ::  HexCaptCfg -> Shell ()
+iptablesDNAT _ = do
+  let dnatchain = "HEXCAPTDNAT"
+  found <- fold (grep (prefix "HEXCAPTDNAT") $ inproc "iptables" ["-t", "nat", "-L", "--line-numbers"] "") Fold.list
+
+  fold (inshell "iptables -t nat -F HEXCAPTDNAT 2>/dev/null 1>/dev/null" "") Fold.head
+  fold (inshell "iptables -t nat -X HEXCAPTDNAT 2>/dev/null 1>/dev/null" "") Fold.head
+
+  liftIO $ print found
+
+  return ()
+
 main :: IO ()
-main = do
+main = sh $ do
 
   -- TODO:
   --
   --
-  -- set upstream dns (from resolv.conf)
-  -- set upstream dns from config (override)
-  -- set local domains (from config)
-  -- set local ndnproxy ports per instance
-  -- start ndnproxy instances, sufficient amount
+  -- + set upstream dns (from resolv.conf)
+  -- + set upstream dns from config (override)
+  -- + set local domains (from config)
+  -- + set local ndnproxy ports per instance
+  -- + start ndnproxy instances, sufficient amount
 
 
   -- TODO
-  -- 1) start
-  -- 2)    launch ndnproxy instances
-  -- 2.1)  generate configurations for ndnproxy
+  -- + 1) start
+  -- + 2)    launch ndnproxy instances
+  -- + 2.1)  generate configurations for ndnproxy
   -- 3) insert iptable rules
   -- 4) serve API
   -- 5) keep mac address settings
@@ -215,7 +241,7 @@ main = do
                 _      -> die "Config file not found"
 
 
-  mcfg <- decodeFile (T.unpack $ format fp cfgFname) :: IO (Maybe HexCaptCfg)
+  mcfg <- liftIO $ decodeFile (T.unpack $ format fp cfgFname) :: Shell (Maybe HexCaptCfg)
 
   cfg <- case mcfg of
            Nothing -> die $ format ("Can't parse config "%fp ) cfgFname
@@ -224,7 +250,9 @@ main = do
 
   let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
 
-  mapConcurrently (procNDNProxy) ncfgs
+  iptablesDNAT cfg
+
+  liftIO $ mapConcurrently (procNDNProxy) ncfgs
 
   return ()
 
