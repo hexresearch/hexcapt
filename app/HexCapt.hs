@@ -119,12 +119,20 @@ instance NDNProxyConfig () where
                       ]
 
 
+instance NDNProxyConfig NDNProxyCfg where
+  ndnpListenTCP = nListenTCP
+  ndnpListenUDP = nListenUDP
+  ndnpUpstreamDNS c = fmap trdns (nUpstreamDNS c)
+    where trdns (DNSServer Nothing s)  = (s,".")
+          trdns (DNSServer (Just p) s) = (s,p)
+
 procNDNProxy :: (MonadIO io, NDNProxyConfig cfg) => cfg -> io ()
 procNDNProxy cfg = forever $ sh $ do
     fname' <- mktempfile "/tmp" "ndnproxy-conf"
     output fname' (return (ndnproxyConfigAsText cfg))
     let fname = format fp fname'
     stdout (return fname)
+    stdout (return "\n")
     procs "ndnproxy" ["-c", fname] ""
 
 
@@ -214,7 +222,10 @@ main = do
            Just c  -> normalizeConfig c
 
 
-  print cfg
+  let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
 
---   procNDNProxy ()
+  mapConcurrently (procNDNProxy) ncfgs
+
+  return ()
+
 
