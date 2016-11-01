@@ -1,3 +1,6 @@
+listen: 10011
+bind: 0.0.0.0
+
 inputIface: br0
 
 ndnproxy:

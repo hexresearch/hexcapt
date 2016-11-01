@@ -1,38 +1,61 @@
- {-# Language DeriveGeneric, DeriveDataTypeable #-}
+{-# Language DeriveGeneric, DeriveDataTypeable #-}
 {-# Language FlexibleContexts #-}
 {-# Language OverloadedStrings #-}
-{-# LANGUAGE QuasiQuotes, ExtendedDefaultRules #-}
+{-# Language QuasiQuotes, ExtendedDefaultRules #-}
 {-# Language RecordWildCards #-}
+{-# Language TemplateHaskell #-}
 
 module Main where
 
 import Control.Applicative
 import Control.Concurrent.Async
+import Control.Concurrent.STM
+import Control.Concurrent.STM.TVar
 import Control.Exception
+import Control.Lens hiding (has)
 import Control.Monad
 import Control.Monad.Reader
+import qualified Data.Attoparsec.Text as A
 import Data.Aeson
-import Data.Char (isSpace)
+import Data.Char (isSpace,isHexDigit)
 import Data.Data
+import Data.Default
 import Data.Generics.Uniplate.Data
 import Data.Generics.Uniplate.Operations
-import Data.List (nub,sort)
+import Data.List (nub,sort,intercalate)
 import Data.Maybe
 import Data.Text (Text)
 import Data.Typeable
 import Data.Yaml
 import GHC.Generics
+import Network.Wai
+import Network.Wai.Handler.Warp
 import qualified Control.Foldl as Fold
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
 import qualified Data.Text.IO as IO
+import Servant
+import Servant.Server
 import System.Process hiding (shell)
 import Text.InterpolatedString.Perl6 (qc,qq,q)
-import Turtle hiding (Parser)
+import Text.Read
+import Turtle hiding (Parser,view)
 
+import Network.HEXCapt.API
 
 import Debug.Trace
+
+type MAC = String
+
+data MacDB = MacDB { _mdbVersion :: Int
+                   , _mdbMarks   :: M.Map MAC Int
+                   }
+
+makeLenses ''MacDB
+
+instance Default MacDB where
+  def = MacDB 1 M.empty
 
 class NDNProxyConfig a where
   ndnpBanTreshhold :: a -> Int
@@ -61,6 +84,8 @@ data NDNProxyCfg = NDNProxyCfg { nListenTCP :: Int
                                } deriving (Show,Eq,Generic,Data,Typeable)
 
 data HexCaptCfg = HexCaptCfg { hIputIface :: String
+                             , hBind    :: String
+                             , hListen  :: Int
                              , ndnproxy :: [NDNProxyCfg]
                              } deriving (Show,Eq,Generic,Data,Typeable)
 
@@ -84,7 +109,6 @@ instance FromJSON NDNProxyCfg where
 
   parseJSON _          = empty
 
-
 parseUpstreamDNS :: Maybe Value -> Parser [DNSServer]
 
 parseUpstreamDNS (Just o) = do
@@ -101,14 +125,24 @@ parseStaticAddr (Just o) = do
 
 parseStaticAddr Nothing = mzero
 
-
 instance FromJSON HexCaptCfg where
   parseJSON o@(Object v) = do
-      iface <- v .: "inputIface" :: Parser String
+      iface  <- v .: "inputIface" :: Parser String
+      bind   <- v .: "bind" :: Parser String
+      listen <- v .: "listen" :: Parser Int
       (NDNProxyCfgList ps) <- parseJSON o :: Parser NDNProxyCfgList
-      return $ HexCaptCfg iface ps
+      return $ HexCaptCfg iface bind listen ps
 
   parseJSON _ = empty
+
+macDbUpdate :: MAC -> Int -> MacDB -> MacDB
+macDbUpdate mac mark db = (over mdbVersion succ . set mdbMarks marks') db
+  where
+    marks' = M.alter alt mac (db ^. mdbMarks)
+
+    alt v = case (v,mark) of
+      (_, 0) -> Nothing
+      (_, n) -> Just n
 
 
 ndnproxyConfigAsText :: NDNProxyConfig cfg => cfg -> Text
@@ -194,9 +228,8 @@ normalizeConfig cfg = do
                   ("nameserver":dns:_) -> Just $ DNSServer Nothing (T.unpack dns)
                   _                    -> Nothing
 
-
-procDnsDnat:: HexCaptCfg -> IO ()
-procDnsDnat cfg = runDNAT
+maintainDnsDnat:: HexCaptCfg -> IO ()
+maintainDnsDnat cfg = runDNAT
   where
     runDNAT = do
 
@@ -212,12 +245,80 @@ procDnsDnat cfg = runDNAT
         sleep 2.0
 
 
-dnsDNAT_TABLE :: String
-dnsDNAT_TABLE = "HEXCAPTDNSDNAT"
+maintainMangle :: HexCaptCfg -> TVar MacDB -> IO ()
+maintainMangle cfg db = runMangle
+  where
+
+    eth = hIputIface cfg
+
+    runMangle = do
+
+      tv0 <- readTVarIO db >>= newTVarIO . view mdbVersion
+
+      checkMangle cfg >>= mapM_ (dropMangle cfg)
+
+      putStrLn "setup MANGLE"
+
+      forever $ do
+        nums <- checkMangle cfg
+
+        vPrev <- readTVarIO tv0
+        mdb <- readTVarIO db
+
+        let vCurr = mdb ^. mdbVersion
+
+        when (vPrev /= vCurr) $ do
+
+          putStrLn [qq|update MANGLE $vPrev $vCurr ...|]
+
+          let newChain = [qq|$mangle_CHAIN$vCurr|]
+
+          shell [qq|iptables -w 5 -t mangle -N $newChain 2>/dev/null|] mzero
+
+          forM_ (M.toList (mdb ^. mdbMarks)) $ \(mac,mark) -> do
+            putStrLn [qq|add mark rule $eth $mac $mark|]
+            shell [qq|iptables -t mangle -A $newChain -i $eth -m mac --mac-source $mac -j MARK --set-mark $mark|] mzero
+
+          atomically $ writeTVar tv0 vCurr
+
+          shell [qq|iptables -w 5 -t mangle -A $newChain -i $eth -j CONNMARK --save-mark 2>/dev/null|] mzero
+          shell [qq|iptables -w 5 -t mangle -A $newChain -j RETURN 2>/dev/null|] mzero
+          shell [qq|iptables -w 5 -t mangle -A PREROUTING -j $newChain|] mzero
+
+          mapM_ (dropMangle cfg) nums
+
+          return ()
+
+        sleep 1.0
+
+
+dnsDNAT_CHAIN :: String
+dnsDNAT_CHAIN = "HEXCAPTDNSDNAT"
+
+mangle_CHAIN :: String
+mangle_CHAIN = "HEXCAPTMANGLE"
+
+dropMangle :: HexCaptCfg -> (Text,Text) -> IO ()
+dropMangle cfg (n,nm) = do
+  putStrLn [qq|delete chain {(n,nm)}|]
+  shell [qq|iptables -w 5 -t mangle -D PREROUTING -j $nm|] mzero
+  shell [qq|iptables -w 5 -t mangle -F $nm|] mzero
+  shell [qq|iptables -w 5 -t mangle -X $nm|] mzero
+  return ()
+
+checkMangle :: HexCaptCfg -> IO [(Text,Text)]
+checkMangle cfg = do
+  let checkCmd = grep (has $ fromString mangle_CHAIN) $ inshell "iptables -w 5 -t mangle -L PREROUTING --line-numbers 2>/dev/null" ""
+  foldMap (mk . filter (not.T.null) . T.split isSpace) <$> fold checkCmd Fold.list
+
+  where
+    mk :: [Text] -> [(Text,Text)]
+    mk (num:name:_) = [(num,name)]
+    mk _            = []
 
 checkDnsDnat :: HexCaptCfg -> IO Bool
 checkDnsDnat cfg = do
-  let checkCmd = grep (prefix (fromString dnsDNAT_TABLE)) $ inshell "iptables -t nat -L PREROUTING 2>/dev/null" ""
+  let checkCmd = grep (prefix (fromString dnsDNAT_CHAIN)) $ inshell "iptables -w 5 -t nat -L PREROUTING 2>/dev/null" ""
   s <- fold checkCmd Fold.head
   return (isJust s)
 
@@ -229,32 +330,59 @@ createDnsDnat cfg = do
 
   let eth = hIputIface cfg
 
-  shell [qq|iptables -t nat -N $dnsDNAT_TABLE 2>/dev/null|] mzero
-  shell [qq|iptables -t nat -A $dnsDNAT_TABLE -i $eth -j CONNMARK --restore-mark 2>/dev/null|] mzero
+  shell [qq|iptables -t nat -N $dnsDNAT_CHAIN 2>/dev/null|] mzero
+  shell [qq|iptables -t nat -A $dnsDNAT_CHAIN -i $eth -j CONNMARK --restore-mark 2>/dev/null|] mzero
 
   forM_ ncfgs $ \ncfg -> do
     let tcp = nListenTCP ncfg
     let udp = nListenUDP ncfg
 
     forM_ (nMarks ncfg) $ \nmark -> do
-      shell [qq|iptables -t nat -A $dnsDNAT_TABLE -i $eth -p udp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $udp|] mzero
+      shell [qq|iptables -t nat -A $dnsDNAT_CHAIN -i $eth -p udp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $udp 2>/dev/null|] mzero
 
     forM_ (nMarks ncfg) $ \nmark -> do
-      shell [qq|iptables -t nat -A $dnsDNAT_TABLE -i $eth -p tcp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $tcp|] mzero
+      shell [qq|iptables -t nat -A $dnsDNAT_CHAIN -i $eth -p tcp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $tcp 2>/dev/null|] mzero
 
-  shell [qq|iptables -t nat -A $dnsDNAT_TABLE -j RETURN 2>/dev/null|] mzero
+  shell [qq|iptables -t nat -A $dnsDNAT_CHAIN -j RETURN 2>/dev/null|] mzero
 
-  shell [qq|iptables -t nat -A PREROUTING -j $dnsDNAT_TABLE 2>/dev/null|] mzero
+  shell [qq|iptables -t nat -A PREROUTING -j $dnsDNAT_CHAIN 2>/dev/null|] mzero
 
   return ()
 
 dropDnsDnat :: HexCaptCfg -> IO ()
 dropDnsDnat cfg = do
-  putStrLn "DROP DNAT"
-  shell [qq|iptables -t nat -D PREROUTING -j $dnsDNAT_TABLE|] mzero
-  shell [qq|iptables -t nat -F $dnsDNAT_TABLE|] mzero
-  shell [qq|iptables -t nat -X $dnsDNAT_TABLE|] mzero
+  shell [qq|iptables -t nat -D PREROUTING -j $dnsDNAT_CHAIN|] mzero
+  shell [qq|iptables -t nat -F $dnsDNAT_CHAIN|] mzero
+  shell [qq|iptables -t nat -X $dnsDNAT_CHAIN|] mzero
   return ()
+
+
+macParser :: A.Parser String
+macParser = do
+  ms <- A.count 5 macSep
+  ml <- macPart
+  return $ intercalate ":" (ms <> [ml])
+
+  where macPart = A.count 2 (A.satisfy (isHexDigit))
+        macSep  = do
+          m <- macPart
+          A.char ':'
+          return m
+
+serveSetAccess :: HexCaptCfg -> TVar MacDB -> Server HEXCaptAPI
+
+serveSetAccess cfg db (Just mac') (Just mark) = do
+  case (A.parseOnly macParser mac')  of
+    Left _  -> throwError err404
+    Right m -> do
+      liftIO $ atomically $ modifyTVar' db (macDbUpdate m mark)
+      return $ show ("ok", m, mark)
+
+serveSetAccess _ _ _ _ = throwError err404
+
+webapp :: HexCaptCfg -> TVar MacDB -> Application
+webapp cfg db = do
+  serve (Proxy :: Proxy HEXCaptAPI) (serveSetAccess cfg db)
 
 main :: IO ()
 main = do
@@ -294,7 +422,20 @@ main = do
   where
 
     mainLoop cfg = do
-      async (procDnsDnat cfg)
+
+      db <- newTVarIO def :: IO (TVar MacDB)
+
+      let port = hListen cfg
+      let bind = hBind cfg
+
+      let settings = (setPort port  . setHost (fromString bind)) defaultSettings
+
+      async $ do
+        runSettings settings (webapp cfg db)
+
+      async (maintainDnsDnat cfg)
+      async (maintainMangle cfg db)
+
       -- TODO: wait ??
       let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
       mapConcurrently (procNDNProxy) ncfgs
@@ -302,4 +443,5 @@ main = do
     cleanup cfg = do
       putStrLn "DO CLEANUP"
       dropDnsDnat cfg
+      checkMangle cfg >>= mapM_ (dropMangle cfg)
 

@@ -12,6 +12,17 @@ category:            Network
 build-type:          Simple
 cabal-version:       >=1.10
 
+library
+  ghc-options:         -Wall -fno-warn-unused-do-bind
+  hs-source-dirs:      src         
+  exposed-modules:     Network.HEXCapt.API
+
+  build-depends:       base >= 4.7 && < 5
+                     , servant
+                     , text
+
+  default-language:    Haskell2010
+
 executable hexcapt
   hs-source-dirs:      app, src
 
@@ -20,17 +31,24 @@ executable hexcapt
 
   default-language:    Haskell2010
   build-depends:       base
+                     , hexcapt
                      , aeson
                      , async
                      , attoparsec
                      , containers
+                     , data-default
                      , foldl
                      , interpolatedstring-perl6
                      , lens
                      , mtl
                      , process
+                     , servant
+                     , servant-server
+                     , stm
                      , text
                      , transformers
                      , turtle
                      , uniplate
+                     , wai
+                     , warp
                      , yaml
