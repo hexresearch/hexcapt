@@ -1,8 +1,10 @@
+inputIface: eth1
+
 ndnproxy:
     - instance:
         tcp-port: 10053
         udp-port: 10053
-        marks: [0]
+        marks: [0,3]
         static-a:
             - [facebook.com, 127.0.0.1]
             - [google.com, 127.0.0.1]
@@ -12,7 +14,7 @@ ndnproxy:
     - instance:
         tcp-port: 10153
         udp-port: 10153
-        marks: [1]
+        marks: [1,4,6]
         upstream-dns:
             '.' : [8.8.8.8]
         static-a:

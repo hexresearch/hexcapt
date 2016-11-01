@@ -1,4 +1,4 @@
-{-# Language DeriveGeneric, DeriveDataTypeable #-}
+ {-# Language DeriveGeneric, DeriveDataTypeable #-}
 {-# Language FlexibleContexts #-}
 {-# Language OverloadedStrings #-}
 {-# LANGUAGE QuasiQuotes, ExtendedDefaultRules #-}
@@ -8,6 +8,7 @@ module Main where
 
 import Control.Applicative
 import Control.Concurrent.Async
+import Control.Exception
 import Control.Monad
 import Control.Monad.Reader
 import Data.Aeson
@@ -26,7 +27,7 @@ import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
 import qualified Data.Text.IO as IO
-import System.Process
+import System.Process hiding (shell)
 import Text.InterpolatedString.Perl6 (qc,qq,q)
 import Turtle hiding (Parser)
 
@@ -59,7 +60,8 @@ data NDNProxyCfg = NDNProxyCfg { nListenTCP :: Int
                                , nStaticA :: [StaticAddr]
                                } deriving (Show,Eq,Generic,Data,Typeable)
 
-data HexCaptCfg = HexCaptCfg { ndnproxy :: [NDNProxyCfg]
+data HexCaptCfg = HexCaptCfg { hIputIface :: String
+                             , ndnproxy :: [NDNProxyCfg]
                              } deriving (Show,Eq,Generic,Data,Typeable)
 
 
@@ -101,9 +103,10 @@ parseStaticAddr Nothing = mzero
 
 
 instance FromJSON HexCaptCfg where
-  parseJSON o@(Object _) = do
+  parseJSON o@(Object v) = do
+      iface <- v .: "inputIface" :: Parser String
       (NDNProxyCfgList ps) <- parseJSON o :: Parser NDNProxyCfgList
-      return $ HexCaptCfg ps
+      return $ HexCaptCfg iface ps
 
   parseJSON _ = empty
 
@@ -192,20 +195,71 @@ normalizeConfig cfg = do
                   _                    -> Nothing
 
 
-iptablesDNAT ::  HexCaptCfg -> Shell ()
-iptablesDNAT _ = do
-  let dnatchain = "HEXCAPTDNAT"
-  found <- fold (grep (prefix "HEXCAPTDNAT") $ inproc "iptables" ["-t", "nat", "-L", "--line-numbers"] "") Fold.list
+procDnsDnat:: HexCaptCfg -> IO ()
+procDnsDnat cfg = runDNAT
+  where
+    runDNAT = do
 
-  fold (inshell "iptables -t nat -F HEXCAPTDNAT 2>/dev/null 1>/dev/null" "") Fold.head
-  fold (inshell "iptables -t nat -X HEXCAPTDNAT 2>/dev/null 1>/dev/null" "") Fold.head
+      e <- checkDnsDnat cfg
+      when e $ dropDnsDnat cfg
 
-  liftIO $ print found
+      forever $ do
+        exists <- checkDnsDnat cfg
+
+        when (not exists) $ do
+          createDnsDnat cfg
+
+        sleep 2.0
+
+
+dnsDNAT_TABLE :: String
+dnsDNAT_TABLE = "HEXCAPTDNSDNAT"
+
+checkDnsDnat :: HexCaptCfg -> IO Bool
+checkDnsDnat cfg = do
+  let checkCmd = grep (prefix (fromString dnsDNAT_TABLE)) $ inshell "iptables -t nat -L PREROUTING 2>/dev/null" ""
+  s <- fold checkCmd Fold.head
+  return (isJust s)
+
+createDnsDnat :: HexCaptCfg -> IO ()
+createDnsDnat cfg = do
+  putStrLn "createDnsDnat"
+
+  let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
+
+  let eth = hIputIface cfg
+
+  shell [qq|iptables -t nat -N $dnsDNAT_TABLE 2>/dev/null|] mzero
+  shell [qq|iptables -t nat -A $dnsDNAT_TABLE -i $eth -j CONNMARK --restore-mark 2>/dev/null|] mzero
+
+  forM_ ncfgs $ \ncfg -> do
+    let tcp = nListenTCP ncfg
+    let udp = nListenUDP ncfg
+
+    putStrLn [qq|ndnproxy instance|]
+
+    forM_ (nMarks ncfg) $ \nmark -> do
+      shell [qq|iptables -t nat -A $dnsDNAT_TABLE -i $eth -p udp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $udp|] mzero
+
+    forM_ (nMarks ncfg) $ \nmark -> do
+      shell [qq|iptables -t nat -A $dnsDNAT_TABLE -i $eth -p tcp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $tcp|] mzero
+
+  shell [qq|iptables -t nat -A $dnsDNAT_TABLE -j RETURN 2>/dev/null|] mzero
+
+  shell [qq|iptables -t nat -A PREROUTING -j $dnsDNAT_TABLE 2>/dev/null|] mzero
 
   return ()
 
+dropDnsDnat :: HexCaptCfg -> IO ()
+dropDnsDnat cfg = do
+  putStrLn "DROP DNAT"
+  shell [qq|iptables -t nat -D PREROUTING -j $dnsDNAT_TABLE|] mzero
+  shell [qq|iptables -t nat -F $dnsDNAT_TABLE|] mzero
+  shell [qq|iptables -t nat -X $dnsDNAT_TABLE|] mzero
+  return ()
+
 main :: IO ()
-main = sh $ do
+main = do
 
   -- TODO:
   --
@@ -215,7 +269,6 @@ main = sh $ do
   -- + set local domains (from config)
   -- + set local ndnproxy ports per instance
   -- + start ndnproxy instances, sufficient amount
-
 
   -- TODO
   -- + 1) start
@@ -241,7 +294,7 @@ main = sh $ do
                 _      -> die "Config file not found"
 
 
-  mcfg <- liftIO $ decodeFile (T.unpack $ format fp cfgFname) :: Shell (Maybe HexCaptCfg)
+  mcfg <- decodeFile (T.unpack $ format fp cfgFname) :: IO (Maybe HexCaptCfg)
 
   cfg <- case mcfg of
            Nothing -> die $ format ("Can't parse config "%fp ) cfgFname
@@ -250,10 +303,18 @@ main = sh $ do
 
   let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
 
-  iptablesDNAT cfg
+  finally (mainLoop cfg) (cleanup cfg)
 
-  liftIO $ mapConcurrently (procNDNProxy) ncfgs
+--   mapConcurrently (procNDNProxy) ncfgs
 
   return ()
 
+  where
+
+    mainLoop cfg = do
+      async (procDnsDnat cfg) >>= wait
+
+    cleanup cfg = do
+      putStrLn "DO CLEANUP"
+      dropDnsDnat cfg
 
