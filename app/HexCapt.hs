@@ -236,8 +236,6 @@ createDnsDnat cfg = do
     let tcp = nListenTCP ncfg
     let udp = nListenUDP ncfg
 
-    putStrLn [qq|ndnproxy instance|]
-
     forM_ (nMarks ncfg) $ \nmark -> do
       shell [qq|iptables -t nat -A $dnsDNAT_TABLE -i $eth -p udp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $udp|] mzero
 
@@ -261,19 +259,7 @@ dropDnsDnat cfg = do
 main :: IO ()
 main = do
 
-  -- TODO:
-  --
-  --
-  -- + set upstream dns (from resolv.conf)
-  -- + set upstream dns from config (override)
-  -- + set local domains (from config)
-  -- + set local ndnproxy ports per instance
-  -- + start ndnproxy instances, sufficient amount
-
   -- TODO
-  -- + 1) start
-  -- + 2)    launch ndnproxy instances
-  -- + 2.1)  generate configurations for ndnproxy
   -- 3) insert iptable rules
   -- 4) serve API
   -- 5) keep mac address settings
