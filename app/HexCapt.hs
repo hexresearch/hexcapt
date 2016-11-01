@@ -242,23 +242,31 @@ maintainDnsDnat cfg = runDNAT
         when (not exists) $ do
           createDnsDnat cfg
 
-        sleep 2.0
+        sleep 1.0
 
 
 maintainFilter :: HexCaptCfg -> IO ()
 maintainFilter cfg = do
 
+  putStrLn "maintainFilter"
+
   e <- checkFilter cfg
+
   when e $ do
+    putStrLn "dropFilter"
     dropFilter cfg
 
   forever $ do
 
+    putStrLn "checkFilter Exists"
     exists <- checkFilter cfg
+    print ("EXISTS ", exists)
 
     when (not exists) $ do
+      error "FUCK!"
       createFilter cfg
-      sleep 10.0
+
+    sleep 1.0
 
 
 maintainMangle :: HexCaptCfg -> TVar MacDB -> IO ()
@@ -294,7 +302,7 @@ maintainMangle cfg db = runMangle
 
           forM_ (M.toList (mdb ^. mdbMarks)) $ \(mac,mark) -> do
             putStrLn [qq|add mark rule $eth $mac $mark|]
-            shell [qq|iptables -t mangle -A $newChain -i $eth -m mac --mac-source $mac -j MARK --set-mark $mark|] mzero
+            shell [qq|iptables -w -t mangle -A $newChain -i $eth -m mac --mac-source $mac -j MARK --set-mark $mark|] mzero
 
           atomically $ writeTVar tv0 vCurr
 
@@ -318,9 +326,12 @@ mangle_CHAIN = "HEXCAPTMANGLE"
 filter_CHAIN :: String
 filter_CHAIN = "HEXCAPTFILTER"
 
+-- FIXME: BROKEN!!!
+-- FIXME: SERIALIZE ACCESS TO IPTABLES!!!
+
 checkFilter :: HexCaptCfg -> IO Bool
 checkFilter cfg = do
-  let checkCmd = grep (prefix (fromString filter_CHAIN)) $ inshell "iptables -w -t filter -L INPUT 2>/dev/null" ""
+  let checkCmd = grep (prefix (fromString filter_CHAIN)) $ inshell "iptables -t filter -L INPUT 2>/dev/null" ""
   s <- fold checkCmd Fold.head
   return (isJust s)
 
@@ -339,8 +350,8 @@ createFilter cfg = do
 
 --   let eth = hIputIface cfg
 
-  shell [qq|iptables -t filter -N $filter_CHAIN |] mzero
-  shell [qq|iptables -t filter -F $filter_CHAIN |] mzero
+  shell [qq|iptables -w -t filter -N $filter_CHAIN |] mzero
+  shell [qq|iptables -w -t filter -F $filter_CHAIN |] mzero
 
   forM_ ncfgs $ \ncfg -> do
     let tcp = nListenTCP ncfg
@@ -353,7 +364,6 @@ createFilter cfg = do
   shell [qq|iptables -w -t filter -A INPUT -j $filter_CHAIN|] mzero
 
   return ()
-
 
 dropMangle :: HexCaptCfg -> (Text,Text) -> IO ()
 dropMangle cfg (n,nm) = do
@@ -402,7 +412,6 @@ createDnsDnat cfg = do
       shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -p tcp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $tcp 2>/dev/null|] mzero
 
   shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -j RETURN 2>/dev/null|] mzero
-
   shell [qq|iptables -w -t nat -A PREROUTING -j $dnsDNAT_CHAIN 2>/dev/null|] mzero
 
   return ()
@@ -480,21 +489,18 @@ main = do
       let bind = hBind cfg
 
       let settings = (setPort port  . setHost (fromString bind)) defaultSettings
-
-      async $ do
-        runSettings settings (webapp cfg db)
-
+      async (runSettings settings (webapp cfg db))
       async (maintainFilter cfg)
       async (maintainDnsDnat cfg)
       async (maintainMangle cfg db)
-
-      -- TODO: wait ??
       let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
       mapConcurrently (procNDNProxy) ncfgs
+      return ()
 
     cleanup cfg = do
       putStrLn "DO CLEANUP"
       dropDnsDnat cfg
-      dropFilter cfg
       checkMangle cfg >>= mapM_ (dropMangle cfg)
+      dropFilter cfg
+
 
