@@ -301,18 +301,17 @@ main = do
            Just c  -> normalizeConfig c
 
 
-  let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
-
   finally (mainLoop cfg) (cleanup cfg)
-
---   mapConcurrently (procNDNProxy) ncfgs
 
   return ()
 
   where
 
     mainLoop cfg = do
-      async (procDnsDnat cfg) >>= wait
+      async (procDnsDnat cfg)
+      -- TODO: wait ??
+      let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
+      mapConcurrently (procNDNProxy) ncfgs
 
     cleanup cfg = do
       putStrLn "DO CLEANUP"
