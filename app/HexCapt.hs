@@ -376,7 +376,7 @@ serveSetAccess cfg db (Just mac') (Just mark) = do
     Left _  -> throwError err404
     Right m -> do
       liftIO $ atomically $ modifyTVar' db (macDbUpdate m mark)
-      return $ show ("ok", m, mark)
+      return [qq|set access $m $mark ok|]
 
 serveSetAccess _ _ _ _ = throwError err404
 
@@ -386,12 +386,6 @@ webapp cfg db = do
 
 main :: IO ()
 main = do
-
-  -- TODO
-  -- 3) insert iptable rules
-  -- 4) serve API
-  -- 5) keep mac address settings
-  -- 6) re-generate iptable rules on change mac addr. status
 
   homePath <- home
   let hexCaptYaml = "hexcapt.yaml"
