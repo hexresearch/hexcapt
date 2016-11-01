@@ -58,8 +58,6 @@ main = do
 
   cfgFname <- listToMaybe <$> filterM testfile locations
 
-  print cfgFname
-
   defUrl <- case cfgFname of
     Nothing    -> return Nothing
     Just cname -> do
