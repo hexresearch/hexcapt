@@ -343,7 +343,7 @@ dropMangle cfg (n,nm) = do
 
 checkMangle :: HexCaptCfg -> IO [(Text,Text)]
 checkMangle cfg = do
-  let checkCmd = grep (has $ fromString mangle_CHAIN) $ inshell "iptables -w -t mangle -L PREROUTING --line-numbers 2>/dev/null" ""
+  let checkCmd = grep (has $ fromString mangle_CHAIN) $ inshell "iptables -w -t mangle -L PREROUTING --line-numbers" ""
   foldMap (mk . filter (not.T.null) . T.split isSpace) <$> fold checkCmd Fold.list
 
   where
@@ -353,7 +353,7 @@ checkMangle cfg = do
 
 checkDnsDnat :: HexCaptCfg -> IO Bool
 checkDnsDnat cfg = do
-  let checkCmd = grep (prefix (fromString dnsDNAT_CHAIN)) $ inshell "iptables -w -t nat -L PREROUTING 2>/dev/null" ""
+  let checkCmd = grep (prefix (fromString dnsDNAT_CHAIN)) $ inshell "iptables -w -t nat -L PREROUTING" ""
   s <- fold checkCmd Fold.head
   return (isJust s)
 
@@ -367,20 +367,20 @@ createDnsDnat cfg = do
 
   shell [qq|iptables -w -t nat -N $dnsDNAT_CHAIN |] mzero
   shell [qq|iptables -w -t nat -F $dnsDNAT_CHAIN |] mzero
-  shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -j CONNMARK --restore-mark 2>/dev/null|] mzero
+  shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -j CONNMARK --restore-mark|] mzero
 
   forM_ ncfgs $ \ncfg -> do
     let tcp = nListenTCP ncfg
     let udp = nListenUDP ncfg
 
     forM_ (nMarks ncfg) $ \nmark -> do
-      shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -p udp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $udp 2>/dev/null|] mzero
+      shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -p udp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $udp|] mzero
 
     forM_ (nMarks ncfg) $ \nmark -> do
-      shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -p tcp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $tcp 2>/dev/null|] mzero
+      shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -p tcp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $tcp|] mzero
 
-  shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -j RETURN 2>/dev/null|] mzero
-  shell [qq|iptables -w -t nat -A PREROUTING -j $dnsDNAT_CHAIN 2>/dev/null|] mzero
+  shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -j RETURN|] mzero
+  shell [qq|iptables -w -t nat -A PREROUTING -j $dnsDNAT_CHAIN|] mzero
 
   return ()
 
