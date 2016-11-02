@@ -228,94 +228,65 @@ normalizeConfig cfg = do
                   ("nameserver":dns:_) -> Just $ DNSServer Nothing (T.unpack dns)
                   _                    -> Nothing
 
-maintainDnsDnat:: HexCaptCfg -> IO ()
-maintainDnsDnat cfg = runDNAT
-  where
-    runDNAT = do
 
-      e <- checkDnsDnat cfg
-      when e $ dropDnsDnat cfg
+cleanupDnsDnat :: HexCaptCfg -> IO ()
+cleanupDnsDnat cfg = do
+  e <- checkDnsDnat cfg
+  when e $ dropDnsDnat cfg
 
-      forever $ do
-        exists <- checkDnsDnat cfg
+setupDnsDnat :: HexCaptCfg -> IO ()
+setupDnsDnat cfg = do
+  exists <- checkDnsDnat cfg
+  when (not exists) $ do
+    createDnsDnat cfg
 
-        when (not exists) $ do
-          createDnsDnat cfg
-
-        sleep 1.0
-
-
-maintainFilter :: HexCaptCfg -> IO ()
-maintainFilter cfg = do
-
-  putStrLn "maintainFilter"
-
+cleanupFilter :: HexCaptCfg -> IO ()
+cleanupFilter cfg = do
   e <- checkFilter cfg
-
   when e $ do
-    putStrLn "dropFilter"
     dropFilter cfg
 
-  forever $ do
-
-    putStrLn "checkFilter Exists"
+setupFilter :: HexCaptCfg -> IO ()
+setupFilter cfg = do
     exists <- checkFilter cfg
-    print ("EXISTS ", exists)
-
     when (not exists) $ do
-      error "FUCK!"
       createFilter cfg
 
-    sleep 1.0
+cleanupMangle :: HexCaptCfg -> IO ()
+cleanupMangle cfg = do
+  checkMangle cfg >>= mapM_ (dropMangle cfg)
 
+setupMangle :: HexCaptCfg -> TVar Int -> TVar MacDB -> IO ()
+setupMangle cfg tv db = do
+    let eth = hIputIface cfg
 
-maintainMangle :: HexCaptCfg -> TVar MacDB -> IO ()
-maintainMangle cfg db = runMangle
-  where
+    vPrev <- readTVarIO tv
+    mdb <- readTVarIO db
+    let vCurr = mdb ^. mdbVersion
 
-    eth = hIputIface cfg
+    when (vPrev /= vCurr) $ do
+      nums <- checkMangle cfg
 
-    runMangle = do
+      putStrLn [qq|update MANGLE $vPrev $vCurr ...|]
 
-      tv0 <- readTVarIO db >>= newTVarIO . view mdbVersion
+      let newChain = [qq|$mangle_CHAIN$vCurr|]
 
-      checkMangle cfg >>= mapM_ (dropMangle cfg)
+      shell [qq|iptables -w -t mangle -N $newChain|] mzero
+      shell [qq|iptables -w -t mangle -F $newChain|] mzero
 
-      putStrLn "setup MANGLE"
+      forM_ (M.toList (mdb ^. mdbMarks)) $ \(mac,mark) -> do
+        putStrLn [qq|add mark rule $eth $mac $mark|]
+        shell [qq|iptables -w -t mangle -A $newChain -i $eth -m mac --mac-source $mac -j MARK --set-mark $mark|] mzero
 
-      forever $ do
-        nums <- checkMangle cfg
+      atomically $ writeTVar tv vCurr
 
-        vPrev <- readTVarIO tv0
-        mdb <- readTVarIO db
+      shell [qq|iptables -w -t mangle -A $newChain -i $eth -j CONNMARK --save-mark|] mzero
+      shell [qq|iptables -w -t mangle -A $newChain -j RETURN|] mzero
+      shell [qq|iptables -w -t mangle -A PREROUTING -j $newChain|] mzero
 
-        let vCurr = mdb ^. mdbVersion
+      mapM_ (dropMangle cfg) nums
 
-        when (vPrev /= vCurr) $ do
-
-          putStrLn [qq|update MANGLE $vPrev $vCurr ...|]
-
-          let newChain = [qq|$mangle_CHAIN$vCurr|]
-
-          shell [qq|iptables -w -t mangle -N $newChain|] mzero
-          shell [qq|iptables -w -t mangle -F $newChain|] mzero
-
-          forM_ (M.toList (mdb ^. mdbMarks)) $ \(mac,mark) -> do
-            putStrLn [qq|add mark rule $eth $mac $mark|]
-            shell [qq|iptables -w -t mangle -A $newChain -i $eth -m mac --mac-source $mac -j MARK --set-mark $mark|] mzero
-
-          atomically $ writeTVar tv0 vCurr
-
-          shell [qq|iptables -w -t mangle -A $newChain -i $eth -j CONNMARK --save-mark 2>/dev/null|] mzero
-          shell [qq|iptables -w -t mangle -A $newChain -j RETURN 2>/dev/null|] mzero
-          shell [qq|iptables -w -t mangle -A PREROUTING -j $newChain|] mzero
-
-          mapM_ (dropMangle cfg) nums
-
-          return ()
-
-        sleep 1.0
-
+      return ()
 
 dnsDNAT_CHAIN :: String
 dnsDNAT_CHAIN = "HEXCAPTDNSDNAT"
@@ -325,9 +296,6 @@ mangle_CHAIN = "HEXCAPTMANGLE"
 
 filter_CHAIN :: String
 filter_CHAIN = "HEXCAPTFILTER"
-
--- FIXME: BROKEN!!!
--- FIXME: SERIALIZE ACCESS TO IPTABLES!!!
 
 checkFilter :: HexCaptCfg -> IO Bool
 checkFilter cfg = do
@@ -475,32 +443,44 @@ main = do
            Just c  -> normalizeConfig c
 
 
-  finally (mainLoop cfg) (cleanup cfg)
+  db <- newTVarIO def :: IO (TVar MacDB)
+
+  let port = hListen cfg
+  let bind = hBind cfg
+
+  let settings = (setPort port  . setHost (fromString bind)) defaultSettings
+  let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
+
+  aw <- async (runSettings settings (webapp cfg db))
+  ans <- mapM (async . procNDNProxy) ncfgs
+  let ass =  aw : ans
+
+  finally (mainLoop cfg db) (cleanup cfg ans)
 
   return ()
 
   where
 
-    mainLoop cfg = do
+    mainLoop cfg db = do
 
-      db <- newTVarIO def :: IO (TVar MacDB)
+      cleanupDnsDnat cfg
+      cleanupFilter cfg
+      cleanupMangle cfg
 
-      let port = hListen cfg
-      let bind = hBind cfg
+      tv <- readTVarIO db >>= newTVarIO . view mdbVersion
 
-      let settings = (setPort port  . setHost (fromString bind)) defaultSettings
-      async (runSettings settings (webapp cfg db))
-      async (maintainFilter cfg)
-      async (maintainDnsDnat cfg)
-      async (maintainMangle cfg db)
-      let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
-      mapConcurrently (procNDNProxy) ncfgs
+      forever $ do
+        setupMangle cfg tv db
+        setupDnsDnat cfg
+        setupFilter cfg
+        sleep 1.0
+
       return ()
 
-    cleanup cfg = do
-      putStrLn "DO CLEANUP"
-      dropDnsDnat cfg
-      checkMangle cfg >>= mapM_ (dropMangle cfg)
-      dropFilter cfg
-
+    cleanup cfg as = do
+      putStrLn "DO CLEANUP ON EXIT"
+      mapM_ cancel as
+      cleanupDnsDnat cfg
+      cleanupFilter cfg
+      cleanupMangle cfg
 
