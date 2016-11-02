@@ -461,7 +461,7 @@ main = do
   ans <- mapM (async . procNDNProxy) ncfgs
   let ass =  aw : ans
 
-  finally (mainLoop cfg db ev) (cleanup cfg ans)
+  finally (mainLoop cfg db ev) (cleanup cfg ass)
 
   return ()
 
