@@ -9,13 +9,13 @@ module Main where
 
 import Control.Applicative
 import Control.Concurrent.Async
+import Control.Concurrent.Event (Event)
 import Control.Concurrent.STM
 import Control.Concurrent.STM.TVar
 import Control.Exception
 import Control.Lens hiding (has)
 import Control.Monad
 import Control.Monad.Reader
-import qualified Data.Attoparsec.Text as A
 import Data.Aeson
 import Data.Char (isSpace,isHexDigit)
 import Data.Data
@@ -30,7 +30,9 @@ import Data.Yaml
 import GHC.Generics
 import Network.Wai
 import Network.Wai.Handler.Warp
+import qualified Control.Concurrent.Event as Event
 import qualified Control.Foldl as Fold
+import qualified Data.Attoparsec.Text as A
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
@@ -86,6 +88,7 @@ data NDNProxyCfg = NDNProxyCfg { nListenTCP :: Int
 data HexCaptCfg = HexCaptCfg { hIputIface :: String
                              , hBind    :: String
                              , hListen  :: Int
+                             , hSleep   :: Double
                              , ndnproxy :: [NDNProxyCfg]
                              } deriving (Show,Eq,Generic,Data,Typeable)
 
@@ -130,8 +133,9 @@ instance FromJSON HexCaptCfg where
       iface  <- v .: "inputIface" :: Parser String
       bind   <- v .: "bind" :: Parser String
       listen <- v .: "listen" :: Parser Int
+      zzz    <- v .:? "sleep" :: Parser (Maybe Double)
       (NDNProxyCfgList ps) <- parseJSON o :: Parser NDNProxyCfgList
-      return $ HexCaptCfg iface bind listen ps
+      return $ HexCaptCfg iface bind listen (fromMaybe 1.0 zzz) ps
 
   parseJSON _ = empty
 
@@ -403,20 +407,20 @@ macParser = do
           A.char ':'
           return m
 
-serveSetAccess :: HexCaptCfg -> TVar MacDB -> Server HEXCaptAPI
-
-serveSetAccess cfg db (Just mac') (Just mark) = do
+serveSetAccess :: HexCaptCfg -> TVar MacDB -> Event -> Server HEXCaptAPI
+serveSetAccess cfg db ev (Just mac') (Just mark) = do
   case (A.parseOnly macParser mac')  of
     Left _  -> throwError err404
     Right m -> do
       liftIO $ atomically $ modifyTVar' db (macDbUpdate m mark)
+      liftIO $ Event.signal ev
       return [qq|set access $m $mark ok|]
 
-serveSetAccess _ _ _ _ = throwError err404
+serveSetAccess _ _ _ _ _ = throwError err404
 
-webapp :: HexCaptCfg -> TVar MacDB -> Application
-webapp cfg db = do
-  serve (Proxy :: Proxy HEXCaptAPI) (serveSetAccess cfg db)
+webapp :: HexCaptCfg -> TVar MacDB -> Event -> Application
+webapp cfg db ev = do
+  serve (Proxy :: Proxy HEXCaptAPI) (serveSetAccess cfg db ev)
 
 main :: IO ()
 main = do
@@ -451,17 +455,21 @@ main = do
   let settings = (setPort port  . setHost (fromString bind)) defaultSettings
   let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
 
-  aw <- async (runSettings settings (webapp cfg db))
+  ev <- Event.new :: IO Event
+
+  aw <- async (runSettings settings (webapp cfg db ev))
   ans <- mapM (async . procNDNProxy) ncfgs
   let ass =  aw : ans
 
-  finally (mainLoop cfg db) (cleanup cfg ans)
+  finally (mainLoop cfg db ev) (cleanup cfg ans)
 
   return ()
 
   where
 
-    mainLoop cfg db = do
+    mainLoop cfg db ev = do
+
+      let zzz = hSleep cfg
 
       cleanupDnsDnat cfg
       cleanupFilter cfg
@@ -473,7 +481,9 @@ main = do
         setupMangle cfg tv db
         setupDnsDnat cfg
         setupFilter cfg
-        sleep 5.0
+
+        _ <- Event.waitTimeout ev (floor (zzz*1000000))
+        return ()
 
       return ()
 

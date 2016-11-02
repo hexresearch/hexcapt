@@ -35,6 +35,7 @@ executable hexcapt
                      , aeson
                      , async
                      , attoparsec
+                     , concurrent-extra
                      , containers
                      , data-default
                      , foldl
