@@ -473,7 +473,7 @@ main = do
         setupMangle cfg tv db
         setupDnsDnat cfg
         setupFilter cfg
-        sleep 1.0
+        sleep 5.0
 
       return ()
 
