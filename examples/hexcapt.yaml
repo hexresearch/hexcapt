@@ -24,3 +24,13 @@ ndnproxy:
             '.' : [8.8.8.8]
         static-a:
             - [someshit.local, 127.0.0.1]
+
+# a special case, ndnproxy with no DNAT
+    - instance:
+        tcp-port: 10253
+        udp-port: 10253
+        marks: []
+        upstream-dns:
+            '.' : [8.8.8.8]
+        static-a:
+            - [someshit.local, 127.0.0.1]

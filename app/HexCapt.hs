@@ -187,8 +187,7 @@ procNDNProxy cfg = sh $ do
     fname' <- mktempfile "/tmp" "ndnproxy-conf"
     output fname' (return (ndnproxyConfigAsText cfg))
     let fname = format fp fname'
-    stdout (return fname)
-    stdout (return "\n")
+    stdout (return (fname <> "\n"))
     procs "ndnproxy" ["-c", fname] ""
 
 data RNorm = RNorm { resolvConf :: [DNSServer] }
@@ -211,7 +210,7 @@ normalizeConfig cfg = do
 
   let cfg' = runReader (rewriteBiM tr cfg) rn
 
-  let marks = concat [ nm | (NDNProxyCfg{nMarks = nm}) <- universeBi cfg' ]
+  let marks = concat $ filter (not.null) [ nm | (NDNProxyCfg{nMarks = nm}) <- universeBi cfg' ]
 
   when (length marks /= length (S.fromList marks)) $ do
     die $ "Marks must be unique for each ndnproxy instance"
@@ -219,8 +218,6 @@ normalizeConfig cfg = do
   return cfg'
 
   where
-    tr (a@NDNProxyCfg { nMarks = [] }) = return $ Just (a { nMarks = [0] } )
-
     tr (a@NDNProxyCfg { nUpstreamDNS = [] }) = do
       res <- asks resolvConf
       return $ Just (a { nUpstreamDNS = res } )
@@ -365,7 +362,7 @@ createDnsDnat :: HexCaptCfg -> IO ()
 createDnsDnat cfg = do
   putStrLn "createDnsDnat"
 
-  let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
+  let ncfgs = filter (not.null.nMarks) [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
 
   let eth = hIputIface cfg
 

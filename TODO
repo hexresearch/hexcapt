@@ -1,4 +1,4 @@
-- [ ] TODO: ndnproxy instance без марки, например для резолвинга особых случаев
+- [+] TODO: ndnproxy instance без марки, например для резолвинга особых случаев
 - [ ] TODO: ndnproxy static_a, static_aaaa с частичной маской 
 
 
