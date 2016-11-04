@@ -3,34 +3,43 @@ listen: 10011
 bind: 0.0.0.0
 sleep: 10.0
 
-inputIface: br0
+input-iface: br0
+
+local-domains:
+            - [clients3.google.com, 192.168.2.1]
+            - [connectivitycheck.android.com, 192.168.2.1]
+            - [geowalk.ru, 192.168.2.1]
+            - [start.tutu.tv, 192.168.2.1]
+            - [tilestream.geowalk.ru, 192.168.2.1]
+            - [tutu.tv, 192.168.2.1]
+            - [video.tutu.tv, 192.168.2.1]
+            - [www.geowalk.ru, 192.168.2.1]
+            - [www.msftncsi.com, 192.168.2.1]
+            - [www.tutu.tv, 192.168.2.1]
+            - [www.video.tutu.tv, 192.168.2.1]
 
 ndnproxy:
+
     - instance:
         tcp-port: 10053
         udp-port: 10053
         marks: [0]
         static-a:
-            - [facebook.com, 127.0.0.1]
-            - [google.com, 127.0.0.1]
-            - [yandex.ru, 127.0.0.1]
-            - [vk.com, 127.0.0.1]
+            - ['*', 192.168.2.1]
 
     - instance:
         tcp-port: 10153
         udp-port: 10153
         marks: [1]
+        static-a: []
         upstream-dns:
             '.' : [8.8.8.8]
-        static-a:
-            - [someshit.local, 127.0.0.1]
 
 # a special case, ndnproxy with no DNAT
     - instance:
         tcp-port: 10253
         udp-port: 10253
         marks: []
+        static-a: []
         upstream-dns:
             '.' : [8.8.8.8]
-        static-a:
-            - [someshit.local, 127.0.0.1]

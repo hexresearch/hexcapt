@@ -130,12 +130,18 @@ parseStaticAddr Nothing = mzero
 
 instance FromJSON HexCaptCfg where
   parseJSON o@(Object v) = do
-      iface  <- v .: "inputIface" :: Parser String
+      iface  <- v .: "input-iface" :: Parser String
       bind   <- v .: "bind" :: Parser String
       listen <- v .: "listen" :: Parser Int
       zzz    <- v .:? "sleep" :: Parser (Maybe Double)
+
+      locald <- (v .:? "local-domains") >>= parseStaticAddr
+
       (NDNProxyCfgList ps) <- parseJSON o :: Parser NDNProxyCfgList
-      return $ HexCaptCfg iface bind listen (fromMaybe 1.0 zzz) ps
+
+      let ps' = fmap (\cfg -> cfg { nStaticA = nStaticA cfg <> locald} ) ps
+
+      return $ HexCaptCfg iface bind listen (fromMaybe 1.0 zzz) ps'
 
   parseJSON _ = empty
 
