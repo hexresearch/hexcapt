@@ -26,7 +26,7 @@ library
 executable hexcapt
   hs-source-dirs:      app, src
 
-  main-is:             HexCapt.hs
+  main-is:             HexCaptNew.hs
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
 
   default-language:    Haskell2010
@@ -38,6 +38,7 @@ executable hexcapt
                      , concurrent-extra
                      , containers
                      , data-default
+                     , exceptions
                      , foldl
                      , interpolatedstring-perl6
                      , lens

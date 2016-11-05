@@ -1,5 +1,6 @@
 {-# Language DeriveGeneric, DeriveDataTypeable #-}
 {-# Language FlexibleContexts #-}
+{-# Language GeneralizedNewtypeDeriving #-}
 {-# Language OverloadedStrings #-}
 {-# Language QuasiQuotes, ExtendedDefaultRules #-}
 {-# Language RecordWildCards #-}
@@ -384,7 +385,7 @@ createFilter cfg = do
     shell [qq|iptables -t filter -A $filter_CHAIN -p tcp --dport $tcp -j ACCEPT|] mzero
 
   shell [qq|iptables -t filter -A $filter_CHAIN -j RETURN|] mzero
-  shell [qq|iptables -t filter -A INPUT -j $filter_CHAIN|] mzero
+  shell [qq|iptables -t filter -I INPUT 1 -j $filter_CHAIN|] mzero
 
   return ()
 
