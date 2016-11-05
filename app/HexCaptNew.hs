@@ -115,7 +115,7 @@ insertChain t c mpos = do
   liftIO $ putStrLn  [qq|inserting new chain $nm|]
   liftIO $ Iptables.createChain t nm
   liftIO $ Iptables.insertRule t c Nothing  ([qq|-j $nm|]::String)
-  liftIO $ Iptables.insertRule t c (Just 1) ([qq|-j $nm|]::String)
+--   liftIO $ Iptables.insertRule t c (Just 1) ([qq|-j $nm|]::String)
   trackChain t c nm
   return nm
 

@@ -16,6 +16,7 @@ library
   ghc-options:         -Wall -fno-warn-unused-do-bind
   hs-source-dirs:      src         
   exposed-modules:     Network.HEXCapt.API
+                     , HEXCapt.Config
                      , System.Shell.Iptables
 
   build-depends:       base >= 4.7 && < 5
@@ -24,6 +25,7 @@ library
                      , servant
                      , text
                      , turtle
+                     , yaml
 
   default-language:    Haskell2010
 
