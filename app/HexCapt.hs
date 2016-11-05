@@ -33,6 +33,7 @@ import Network.Wai.Handler.Warp
 import qualified Control.Concurrent.Event as Event
 import qualified Control.Foldl as Fold
 import qualified Data.Attoparsec.Text as A
+import qualified Data.List as L
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
@@ -90,12 +91,30 @@ data HexCaptCfg = HexCaptCfg { hIputIface :: String
                              , hListen  :: Int
                              , hSleep   :: Double
                              , hLocalIp :: String
+                             , hModes   :: [HexCaptMode]
                              , ndnproxy :: [NDNProxyCfg]
                              } deriving (Show,Eq,Generic,Data,Typeable)
 
 
+data HexCaptMode = HexCaptMode { hmMarks :: [Int]
+                               , hmLocalDomains :: [String]
+                               } deriving (Show,Eq,Generic,Data,Typeable)
+
+data HexCaptModeList = HexCaptModeList [HexCaptMode]
+                       deriving Show
+
 newtype NDNProxyCfgList = NDNProxyCfgList [NDNProxyCfg]
                           deriving (Show)
+
+instance FromJSON HexCaptModeList where
+  parseJSON (Object v) = HexCaptModeList <$> v .: "modes"
+  parseJSON _          = mzero
+
+instance FromJSON HexCaptMode where
+  parseJSON (Object v) = HexCaptMode
+                           <$> ((v .: "mode") >>= (.: "marks"))
+                           <*> ((v .: "mode") >>= (.: "local-domains"))
+  parseJSON _ = mzero
 
 instance FromJSON NDNProxyCfgList where
   parseJSON (Object v) = NDNProxyCfgList <$> v .: "ndnproxy"
@@ -135,21 +154,41 @@ instance FromJSON HexCaptCfg where
       bind    <- v .: "bind"        :: Parser String
       listen  <- v .: "listen"      :: Parser Int
       localIp <- v .: "local-ip"    :: Parser String
-      localDomains <- fromMaybe [] <$> v .:? "local-domains" :: Parser [String]
       zzz     <- v .:? "sleep"      :: Parser (Maybe Double)
 
-      let loc1 = fmap (\d -> StaticAddr d localIp) localDomains
-
       (NDNProxyCfgList ps) <- parseJSON o :: Parser NDNProxyCfgList
+      (HexCaptModeList ms) <- parseJSON o :: Parser HexCaptModeList
 
-      let ps' = fmap (\cfg -> cfg { nStaticA = nStaticA cfg <> loc1} ) ps
+      -- common domains for all ndnproxy instances
+      let lds = [ (Nothing, mkAddrs localIp ld) | HexCaptMode { hmMarks = [], hmLocalDomains = ld } <- ms ]
+
+      -- per mark domain list
+      let mds = concat [ mkDict all localIp ld | HexCaptMode { hmMarks = all@(m:ms), hmLocalDomains = ld } <- ms ]
+
+      let dmap = fmap (foldMap expandDomain) $ M.fromList (lds <> mds)
+
+      let ps' = fmap (\cfg -> cfg { nStaticA = nStaticA cfg <> getDomains (nMarks cfg) dmap } ) ps
 
       return $ HexCaptCfg iface
                           bind
                           listen
                           (fromMaybe 1.0 zzz)
                           localIp
+                          ms
                           ps'
+
+    where
+      mkAddrs :: String -> [String] -> [StaticAddr]
+      mkAddrs ip as = zipWith StaticAddr as (repeat ip)
+
+      mkDict :: [Int] -> String -> [String] -> [(Maybe Int, [StaticAddr])]
+      mkDict ms ip as = fmap (\m -> (Just m, mkAddrs ip as)) ms
+
+      getDomains :: [Int] -> M.Map (Maybe Int) [StaticAddr] -> [StaticAddr]
+      getDomains ms mm = concat $ catMaybes $ M.lookup Nothing mm : fmap (flip M.lookup mm . Just) ms
+
+      expandDomain :: StaticAddr -> [StaticAddr]
+      expandDomain a@(StaticAddr dom ip) = catMaybes [Just a, flip StaticAddr ip <$> L.stripPrefix "*." dom]
 
   parseJSON _ = empty
 
@@ -329,7 +368,6 @@ dropFilter cfg = do
 
 createFilter :: HexCaptCfg -> IO ()
 createFilter cfg = do
-  putStrLn "createFilter"
 
   let ncfgs = [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
 
@@ -370,14 +408,12 @@ checkMangle cfg = do
 
 checkDnsDnat :: HexCaptCfg -> IO Bool
 checkDnsDnat cfg = do
-  putStrLn "checkDnsDnat"
   let checkCmd = grep (prefix (fromString dnsDNAT_CHAIN)) $ inshell "iptables -t nat -L PREROUTING" empty
   s <- fold checkCmd Fold.head
   return (isJust s)
 
 createDnsDnat :: HexCaptCfg -> IO ()
 createDnsDnat cfg = do
-  putStrLn "createDnsDnat"
 
   let ncfgs = filter (not.null.nMarks) [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
 
@@ -404,7 +440,6 @@ createDnsDnat cfg = do
 
 dropDnsDnat :: HexCaptCfg -> IO ()
 dropDnsDnat cfg = do
-  putStrLn "dropDnsDnat"
   shell [qq|iptables -t nat -D PREROUTING -j $dnsDNAT_CHAIN|] mzero
   shell [qq|iptables -t nat -F $dnsDNAT_CHAIN|] mzero
   shell [qq|iptables -t nat -X $dnsDNAT_CHAIN|] mzero
