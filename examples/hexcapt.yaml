@@ -1,7 +1,7 @@
 
 listen: 10011
 bind: 0.0.0.0
-sleep: 10.0
+sleep: 1.0
 
 input-iface: br0
 

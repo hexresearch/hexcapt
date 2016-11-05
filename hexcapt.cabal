@@ -13,20 +13,35 @@ build-type:          Custom
 cabal-version:       >=1.10
 
 library
-  ghc-options:         -Wall -fno-warn-unused-do-bind
-  hs-source-dirs:      src         
+  ghc-options:         -Wall -fno-warn-unused-do-bind -Wname-shadowing
+  hs-source-dirs:      src
+
   exposed-modules:     Network.HEXCapt.API
+                     , HEXCapt.Config
+                     , HEXCapt.Types
+                     , System.Shell.Iptables
 
   build-depends:       base >= 4.7 && < 5
+                     , aeson
+                     , containers
+                     , foldl
+                     , interpolatedstring-perl6
+                     , mtl
                      , servant
                      , text
+                     , turtle
+                     , uniplate 
+                     , yaml
 
   default-language:    Haskell2010
 
 executable hexcapt
-  hs-source-dirs:      app, src
+  hs-source-dirs:      app
 
-  main-is:             HexCaptNew.hs
+  other-modules:       Application.HEXCapt.Server
+                     , Application.HEXCapt.Types
+
+  main-is:             HexCapt.hs
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
 
   default-language:    Haskell2010
@@ -35,20 +50,27 @@ executable hexcapt
                      , aeson
                      , async
                      , attoparsec
+                     , bytestring
                      , concurrent-extra
                      , containers
                      , data-default
+                     , digits
                      , exceptions
                      , foldl
                      , interpolatedstring-perl6
                      , lens
+                     , lifted-async
+                     , lifted-base
+                     , monad-control
                      , mtl
                      , process
                      , servant
                      , servant-server
+                     , SHA
                      , stm
                      , text
                      , transformers
+                     , transformers-base
                      , turtle
                      , uniplate
                      , wai
@@ -57,19 +79,19 @@ executable hexcapt
 
 
 executable hexcapt-client
-  hs-source-dirs:      app, src
+  hs-source-dirs:      app
 
   main-is:             HexCaptClient.hs
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
 
   default-language:    Haskell2010
   build-depends:       base
-                     , hexcapt
                      , aeson
                      , async
                      , attoparsec
                      , containers
                      , foldl
+                     , hexcapt
                      , http-client
                      , interpolatedstring-perl6
                      , lens
@@ -82,4 +104,3 @@ executable hexcapt-client
                      , turtle
                      , uniplate
                      , yaml
-
