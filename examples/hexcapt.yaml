@@ -5,20 +5,32 @@ sleep: 10.0
 
 input-iface: br0
 
+local-ip:  192.168.2.1
+
 local-domains:
-            - [clients3.google.com, 192.168.2.1]
-            - [connectivitycheck.android.com, 192.168.2.1]
-            - [geowalk.ru, 192.168.2.1]
-            - [start.tutu.tv, 192.168.2.1]
-            - [tilestream.geowalk.ru, 192.168.2.1]
-            - [tutu.tv, 192.168.2.1]
-            - [video.tutu.tv, 192.168.2.1]
-            - [www.geowalk.ru, 192.168.2.1]
-            - [www.msftncsi.com, 192.168.2.1]
-            - [www.tutu.tv, 192.168.2.1]
-            - [www.video.tutu.tv, 192.168.2.1]
+    - "clients3.google.com"
+    - "connectivitycheck.android.com"
+    - "geowalk.ru"
+    - "start.tutu.tv"
+    - "tilestream.geowalk.ru"
+    - "tutu.tv"
+    - "video.tutu.tv"
+    - "www.geowalk.ru"
+    - "www.msftncsi.com"
+    - "www.tutu.tv"
+    - "www.video.tutu.tv"
+
 
 ndnproxy:
+
+    # a special case, ndnproxy with no DNAT
+    - instance:
+        tcp-port: 11353
+        udp-port: 11353
+        marks: []
+        static-a: []
+        upstream-dns:
+            '.' : [8.8.8.8]
 
     - instance:
         tcp-port: 10053
@@ -31,15 +43,14 @@ ndnproxy:
         tcp-port: 10153
         udp-port: 10153
         marks: [1]
-        static-a: []
         upstream-dns:
             '.' : [8.8.8.8]
+        static-a: []
 
-# a special case, ndnproxy with no DNAT
     - instance:
         tcp-port: 10253
         udp-port: 10253
-        marks: []
-        static-a: []
+        marks: [2]
         upstream-dns:
             '.' : [8.8.8.8]
+        static-a: []

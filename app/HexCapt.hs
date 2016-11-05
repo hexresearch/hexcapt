@@ -41,7 +41,7 @@ import Servant
 import Servant.Server
 import System.Process hiding (shell)
 import Text.InterpolatedString.Perl6 (qc,qq,q)
-import Text.Read
+import Text.Read (readMaybe)
 import Turtle hiding (Parser,view)
 
 import Network.HEXCapt.API
@@ -89,6 +89,7 @@ data HexCaptCfg = HexCaptCfg { hIputIface :: String
                              , hBind    :: String
                              , hListen  :: Int
                              , hSleep   :: Double
+                             , hLocalIp :: String
                              , ndnproxy :: [NDNProxyCfg]
                              } deriving (Show,Eq,Generic,Data,Typeable)
 
@@ -130,18 +131,25 @@ parseStaticAddr Nothing = mzero
 
 instance FromJSON HexCaptCfg where
   parseJSON o@(Object v) = do
-      iface  <- v .: "input-iface" :: Parser String
-      bind   <- v .: "bind" :: Parser String
-      listen <- v .: "listen" :: Parser Int
-      zzz    <- v .:? "sleep" :: Parser (Maybe Double)
+      iface   <- v .: "input-iface" :: Parser String
+      bind    <- v .: "bind"        :: Parser String
+      listen  <- v .: "listen"      :: Parser Int
+      localIp <- v .: "local-ip"    :: Parser String
+      localDomains <- fromMaybe [] <$> v .:? "local-domains" :: Parser [String]
+      zzz     <- v .:? "sleep"      :: Parser (Maybe Double)
 
-      locald <- (v .:? "local-domains") >>= parseStaticAddr
+      let loc1 = fmap (\d -> StaticAddr d localIp) localDomains
 
       (NDNProxyCfgList ps) <- parseJSON o :: Parser NDNProxyCfgList
 
-      let ps' = fmap (\cfg -> cfg { nStaticA = nStaticA cfg <> locald} ) ps
+      let ps' = fmap (\cfg -> cfg { nStaticA = nStaticA cfg <> loc1} ) ps
 
-      return $ HexCaptCfg iface bind listen (fromMaybe 1.0 zzz) ps'
+      return $ HexCaptCfg iface
+                          bind
+                          listen
+                          (fromMaybe 1.0 zzz)
+                          localIp
+                          ps'
 
   parseJSON _ = empty
 
@@ -183,7 +191,9 @@ dns_udp_port = {ndnpListenUDP c}
 instance NDNProxyConfig NDNProxyCfg where
   ndnpListenTCP = nListenTCP
   ndnpListenUDP = nListenUDP
-  ndnpStaticA   = fmap (\(StaticAddr a b) -> (a,b)) . nStaticA
+
+  ndnpStaticA = fmap (\(StaticAddr a b) -> (a,b)) . nStaticA
+
   ndnpUpstreamDNS c = fmap trdns (nUpstreamDNS c)
     where trdns (DNSServer Nothing s)  = (s,".")
           trdns (DNSServer (Just p) s) = (s,p)
@@ -278,18 +288,18 @@ setupMangle cfg tv db = do
 
       let newChain = [qq|$mangle_CHAIN$vCurr|]
 
-      shell [qq|iptables -w -t mangle -N $newChain|] mzero
-      shell [qq|iptables -w -t mangle -F $newChain|] mzero
+      shell [qq|iptables -t mangle -N $newChain|] mzero
+      shell [qq|iptables -t mangle -F $newChain|] mzero
 
       forM_ (M.toList (mdb ^. mdbMarks)) $ \(mac,mark) -> do
         putStrLn [qq|add mark rule $eth $mac $mark|]
-        shell [qq|iptables -w -t mangle -A $newChain -i $eth -m mac --mac-source $mac -j MARK --set-mark $mark|] mzero
+        shell [qq|iptables -t mangle -A $newChain -i $eth -m mac --mac-source $mac -j MARK --set-mark $mark|] mzero
 
       atomically $ writeTVar tv vCurr
 
-      shell [qq|iptables -w -t mangle -A $newChain -i $eth -j CONNMARK --save-mark|] mzero
-      shell [qq|iptables -w -t mangle -A $newChain -j RETURN|] mzero
-      shell [qq|iptables -w -t mangle -A PREROUTING -j $newChain|] mzero
+      shell [qq|iptables -t mangle -A $newChain -i $eth -j CONNMARK --save-mark|] mzero
+      shell [qq|iptables -t mangle -A $newChain -j RETURN|] mzero
+      shell [qq|iptables -t mangle -A PREROUTING -j $newChain|] mzero
 
       mapM_ (dropMangle cfg) nums
 
@@ -306,15 +316,15 @@ filter_CHAIN = "HEXCAPTFILTER"
 
 checkFilter :: HexCaptCfg -> IO Bool
 checkFilter cfg = do
-  let checkCmd = grep (prefix (fromString filter_CHAIN)) $ inshell "iptables -t filter -L INPUT 2>/dev/null" ""
+  let checkCmd = grep (prefix (fromString filter_CHAIN)) $ inshell "iptables -t filter -L INPUT" empty
   s <- fold checkCmd Fold.head
   return (isJust s)
 
 dropFilter :: HexCaptCfg -> IO ()
 dropFilter cfg = do
-  shell [qq|iptables -w -t filter -D INPUT -j $filter_CHAIN|] mzero
-  shell [qq|iptables -w -t filter -F $filter_CHAIN|] mzero
-  shell [qq|iptables -w -t filter -X $filter_CHAIN|] mzero
+  shell [qq|iptables -t filter -D INPUT -j $filter_CHAIN|] mzero
+  shell [qq|iptables -t filter -F $filter_CHAIN|] mzero
+  shell [qq|iptables -t filter -X $filter_CHAIN|] mzero
   return ()
 
 createFilter :: HexCaptCfg -> IO ()
@@ -325,32 +335,32 @@ createFilter cfg = do
 
 --   let eth = hIputIface cfg
 
-  shell [qq|iptables -w -t filter -N $filter_CHAIN |] mzero
-  shell [qq|iptables -w -t filter -F $filter_CHAIN |] mzero
+  shell [qq|iptables -t filter -N $filter_CHAIN |] mzero
+  shell [qq|iptables -t filter -F $filter_CHAIN |] mzero
 
   forM_ ncfgs $ \ncfg -> do
     let tcp = nListenTCP ncfg
     let udp = nListenUDP ncfg
 
-    shell [qq|iptables -w -t filter -A $filter_CHAIN -p udp --dport $udp -j ACCEPT|] mzero
-    shell [qq|iptables -w -t filter -A $filter_CHAIN -p tcp --dport $tcp -j ACCEPT|] mzero
+    shell [qq|iptables -t filter -A $filter_CHAIN -p udp --dport $udp -j ACCEPT|] mzero
+    shell [qq|iptables -t filter -A $filter_CHAIN -p tcp --dport $tcp -j ACCEPT|] mzero
 
-  shell [qq|iptables -w -t filter -A $filter_CHAIN -j RETURN|] mzero
-  shell [qq|iptables -w -t filter -A INPUT -j $filter_CHAIN|] mzero
+  shell [qq|iptables -t filter -A $filter_CHAIN -j RETURN|] mzero
+  shell [qq|iptables -t filter -A INPUT -j $filter_CHAIN|] mzero
 
   return ()
 
 dropMangle :: HexCaptCfg -> (Text,Text) -> IO ()
 dropMangle cfg (n,nm) = do
   putStrLn [qq|delete chain {(n,nm)}|]
-  shell [qq|iptables -w -t mangle -D PREROUTING -j $nm|] mzero
-  shell [qq|iptables -w -t mangle -F $nm|] mzero
-  shell [qq|iptables -w -t mangle -X $nm|] mzero
+  shell [qq|iptables -t mangle -D PREROUTING -j $nm|] mzero
+  shell [qq|iptables -t mangle -F $nm|] mzero
+  shell [qq|iptables -t mangle -X $nm|] mzero
   return ()
 
 checkMangle :: HexCaptCfg -> IO [(Text,Text)]
 checkMangle cfg = do
-  let checkCmd = grep (has $ fromString mangle_CHAIN) $ inshell "iptables -w -t mangle -L PREROUTING --line-numbers" ""
+  let checkCmd = grep (has $ fromString mangle_CHAIN) $ inshell "iptables -t mangle -L PREROUTING --line-numbers" empty
   foldMap (mk . filter (not.T.null) . T.split isSpace) <$> fold checkCmd Fold.list
 
   where
@@ -360,7 +370,8 @@ checkMangle cfg = do
 
 checkDnsDnat :: HexCaptCfg -> IO Bool
 checkDnsDnat cfg = do
-  let checkCmd = grep (prefix (fromString dnsDNAT_CHAIN)) $ inshell "iptables -w -t nat -L PREROUTING" ""
+  putStrLn "checkDnsDnat"
+  let checkCmd = grep (prefix (fromString dnsDNAT_CHAIN)) $ inshell "iptables -t nat -L PREROUTING" empty
   s <- fold checkCmd Fold.head
   return (isJust s)
 
@@ -372,30 +383,31 @@ createDnsDnat cfg = do
 
   let eth = hIputIface cfg
 
-  shell [qq|iptables -w -t nat -N $dnsDNAT_CHAIN |] mzero
-  shell [qq|iptables -w -t nat -F $dnsDNAT_CHAIN |] mzero
-  shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -j CONNMARK --restore-mark|] mzero
+  shell [qq|iptables -t nat -N $dnsDNAT_CHAIN |] mzero
+  shell [qq|iptables -t nat -F $dnsDNAT_CHAIN |] mzero
+  shell [qq|iptables -t nat -A $dnsDNAT_CHAIN -i $eth -j CONNMARK --restore-mark|] mzero
 
   forM_ ncfgs $ \ncfg -> do
     let tcp = nListenTCP ncfg
     let udp = nListenUDP ncfg
 
     forM_ (nMarks ncfg) $ \nmark -> do
-      shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -p udp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $udp|] mzero
+      shell [qq|iptables -t nat -A $dnsDNAT_CHAIN -i $eth -p udp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $udp|] mzero
 
     forM_ (nMarks ncfg) $ \nmark -> do
-      shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -i $eth -p tcp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $tcp|] mzero
+      shell [qq|iptables -t nat -A $dnsDNAT_CHAIN -i $eth -p tcp --dport 53 -m mark --mark $nmark -j REDIRECT --to-port $tcp|] mzero
 
-  shell [qq|iptables -w -t nat -A $dnsDNAT_CHAIN -j RETURN|] mzero
-  shell [qq|iptables -w -t nat -A PREROUTING -j $dnsDNAT_CHAIN|] mzero
+  shell [qq|iptables -t nat -A $dnsDNAT_CHAIN -j RETURN|] mzero
+  shell [qq|iptables -t nat -A PREROUTING -j $dnsDNAT_CHAIN|] mzero
 
   return ()
 
 dropDnsDnat :: HexCaptCfg -> IO ()
 dropDnsDnat cfg = do
-  shell [qq|iptables -w -t nat -D PREROUTING -j $dnsDNAT_CHAIN|] mzero
-  shell [qq|iptables -w -t nat -F $dnsDNAT_CHAIN|] mzero
-  shell [qq|iptables -w -t nat -X $dnsDNAT_CHAIN|] mzero
+  putStrLn "dropDnsDnat"
+  shell [qq|iptables -t nat -D PREROUTING -j $dnsDNAT_CHAIN|] mzero
+  shell [qq|iptables -t nat -F $dnsDNAT_CHAIN|] mzero
+  shell [qq|iptables -t nat -X $dnsDNAT_CHAIN|] mzero
   return ()
 
 macParser :: A.Parser String
