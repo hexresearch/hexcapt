@@ -74,6 +74,7 @@ runApp m = do
     finalizeAll track = do
       ts <- liftIO $ atomically $ readTVar track
       forM_ ts $ \(ChainRef t c n) -> do
+        liftIO $ Iptables.unlinkChain t c n
         liftIO $ Iptables.deleteChain t n
 
 newObj :: Monad m => App m Int
@@ -113,6 +114,8 @@ insertChain t c mpos = do
   nm <- genChainName t c
   liftIO $ putStrLn  [qq|inserting new chain $nm|]
   liftIO $ Iptables.createChain t nm
+  liftIO $ Iptables.insertRule t c Nothing  ([qq|-j $nm|]::String)
+  liftIO $ Iptables.insertRule t c (Just 1) ([qq|-j $nm|]::String)
   trackChain t c nm
   return nm
 
