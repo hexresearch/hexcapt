@@ -213,15 +213,6 @@ modes:
 
 ndnproxy:
 
-    # a special case, ndnproxy with no DNAT
-    - instance:
-        tcp-port: 11353
-        udp-port: 11353
-        marks: []
-        static-a: []
-        upstream-dns:
-            '.' : [8.8.8.8]
-
     - instance:
         tcp-port: 10053
         udp-port: 10053
@@ -234,7 +225,8 @@ ndnproxy:
         udp-port: 10253
         marks: [2]
         upstream-dns:
-            '.' : [8.8.8.8]
+            '.' : ["192.168.2.1:10053", 8.8.8.8]
+
         static-a: []
 
     - instance:

@@ -190,9 +190,10 @@ ndnproxyConfigAsText c = str
 
     str = [qc|
 rpc_port = 0
-timeout = 7001
-bantime = 300000
-proceed = 500
+timeout = 5000
+bantime = 120000
+proceed = 1000
+
 ban_threshold = {ndnpBanTreshhold c}
 
 {dnsServers}
