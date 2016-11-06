@@ -56,6 +56,8 @@ executable hexcapt
                      , foldl
                      , interpolatedstring-perl6
                      , lens
+                     , lifted-async
+                     , lifted-base
                      , monad-control
                      , mtl
                      , process
