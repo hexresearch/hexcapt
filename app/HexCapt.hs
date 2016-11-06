@@ -185,6 +185,10 @@ dnatDNS t c = do
 
     insertRule t c Nothing (J RETURN)
 
+dnatExtra :: MonadIO m => TableName -> ChainName -> App m ()
+dnatExtra t c = do
+  liftIO $ putStrLn [qq|Create extra DNAT|]
+
 spawn :: MonadIO m => MonadBaseControl IO (App m) => App m () -> App m ()
 spawn action = do
   tt <- asks (view actions)
@@ -213,6 +217,7 @@ updateMangle track = do
         let rule = [I iface, MAC (MacEQ (MacSrc mac)), (J (SETMARK mark))]
         liftIO $ insertRule t c Nothing rule
 
+      liftIO $ insertRule t c Nothing [J (CONNMARK SAVE)]
       liftIO $ insertRule t c Nothing [J RETURN]
 
       tracked <- liftIO $ atomically $ do
@@ -245,6 +250,7 @@ main = do
 
     insertChain "filter" "INPUT" (Just 1) acceptDNS
     insertChain "nat" "PREROUTING" Nothing dnatDNS
+    insertChain "nat" "PREROUTING" Nothing dnatExtra
 
     trackMangle <- liftIO $ newTVarIO []
     forever $ do
