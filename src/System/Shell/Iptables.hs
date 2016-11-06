@@ -1,3 +1,4 @@
+{-# Language FlexibleInstances #-}
 {-# Language OverloadedStrings #-}
 {-# Language QuasiQuotes, ExtendedDefaultRules #-}
 module System.Shell.Iptables where
@@ -5,6 +6,7 @@ module System.Shell.Iptables where
 import Control.Monad
 import Data.Char (isSpace)
 import Data.Maybe
+import Data.List
 import qualified Control.Foldl as Fold
 import qualified Data.Text as T
 import Text.InterpolatedString.Perl6 (qq,qc,ShowQ(..))
@@ -12,6 +14,54 @@ import Turtle
 
 type TableName = String
 type ChainName = String
+
+data ConnmarkOpt = SAVE | RESTORE
+
+data Proto = UDP (Maybe Int)
+           | TCP (Maybe Int)
+
+data MarkOpt = MarkEQ Int
+
+data IPTablesCmd = RETURN
+                 | ACCEPT
+                 | REDIRECT Int
+                 | CONNMARK ConnmarkOpt
+
+data IPTablesOpt =   J IPTablesCmd
+                   | I String
+                   | P Proto
+                   | MARK MarkOpt
+
+instance ShowQ MarkOpt where
+  showQ (MarkEQ x) = [qq|--mark $x|]
+
+instance ShowQ Proto where
+  showQ (UDP dst) = [qq|udp --dport $d|]
+    where d :: String
+          d = maybe "" show dst
+
+  showQ (TCP dst) = [qq|tcp --dport $d|]
+    where d :: String
+          d = maybe "" show dst
+
+instance ShowQ [IPTablesOpt] where
+  showQ ops = intercalate [qq| |] (fmap showQ ops)
+
+instance ShowQ ConnmarkOpt where
+  showQ SAVE = [qq|--save-mark|]
+  showQ RESTORE = [qq|--restore-mark|]
+
+instance ShowQ IPTablesCmd where
+  showQ RETURN = [qq|RETURN|]
+  showQ ACCEPT = [qq|ACCEPT|]
+  showQ (REDIRECT n) = [qq|REDIRECT --to-port $n|]
+  showQ (CONNMARK x) = [qq|CONNMARK $x|]
+
+instance ShowQ IPTablesOpt where
+  showQ (I x) = [qq|-i $x|]
+  showQ (J x) = [qq|-j $x|]
+  showQ (P x) = [qq|-p $x|]
+  showQ (MARK x) = [qq|-m mark $x |]
 
 createChain :: TableName -> ChainName -> IO ()
 createChain t c = sh $ do

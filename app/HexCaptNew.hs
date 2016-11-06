@@ -8,28 +8,28 @@
 
 module Main where
 
+import Control.Concurrent.STM
+import Control.Concurrent (threadDelay)
+import Control.Lens
 import Control.Monad.Catch
 import Control.Monad.RWS
-import Control.Concurrent (threadDelay)
-import Control.Concurrent.STM
-import Control.Lens
 import Data.Default
 import Data.Digest.Pure.SHA
 import Data.Digits
-import qualified Data.Set as S
+import Data.Generics.Uniplate.Operations
 import qualified Data.ByteString.Lazy as LBS
+import qualified Data.Set as S
 import Text.InterpolatedString.Perl6 (qc,qq,q)
 import Turtle hiding (view)
-
 import HEXCapt.Config
 import qualified System.Shell.Iptables as Iptables
-import System.Shell.Iptables (ChainName, TableName)
+import System.Shell.Iptables
 
 data ChainRef = ChainRef TableName ChainName ChainName
                 deriving (Eq,Ord,Show)
 
 data AppEnv = AppEnv { _chainTrack :: TVar (S.Set ChainRef)
-                     , _cfg        :: HexCaptCfg
+                     , _config     :: HexCaptCfg
                      }
 
 makeLenses ''AppEnv
@@ -112,15 +112,63 @@ insertChain :: (MonadIO m)
             => TableName
             -> ChainName
             -> Maybe Int
-            -> App m ChainName
+            -> (TableName -> ChainName -> App m a)
+            -> App m a
 
-insertChain t c mpos = do
+insertChain t c mpos m = do
   nm <- genChainName t c
   liftIO $ putStrLn  [qq|inserting new chain $nm|]
   liftIO $ Iptables.createChain t nm
   liftIO $ Iptables.insertRule t c mpos ([qq|-j $nm|]::String)
+  x <- m t nm
   trackChain t c nm
-  return nm
+  return x
+
+emptyChain :: MonadIO m => TableName -> ChainName -> App m ()
+emptyChain t c = do
+  liftIO $ Iptables.insertRule t c Nothing (J RETURN)
+  return ()
+
+acceptDNS :: MonadIO m => TableName -> ChainName -> App m ()
+acceptDNS t c = do
+
+  cfg <- asks (view config)
+
+  liftIO $ Iptables.insertRule t c Nothing [P (UDP (Just 53)), J ACCEPT]
+  liftIO $ Iptables.insertRule t c Nothing [P (TCP (Just 53)), J ACCEPT]
+
+  forM_ [ e | e@(NDNProxyCfg{..}) <- universeBi cfg ] $ \pc -> do
+    let tcp = Just $ nListenTCP pc
+    let udp = Just $ nListenUDP pc
+    liftIO $ do
+      -- FIXME: local (redirected) only
+      insertRule t c Nothing [P (UDP udp), J ACCEPT]
+      insertRule t c Nothing [P (TCP tcp), J ACCEPT]
+
+  liftIO $ insertRule t c Nothing (J RETURN)
+
+dnatDNS :: MonadIO m => TableName -> ChainName -> App m ()
+dnatDNS t c = do
+
+  cfg <- asks (view config)
+  let ncfgs = filter (not.null.nMarks) [ e | e@(NDNProxyCfg{nUpstreamDNS = (_:_)}) <- universeBi cfg]
+  let eth = hIputIface cfg
+
+  liftIO $ do
+
+    insertRule t c Nothing [I eth, J (CONNMARK RESTORE)]
+
+    forM_ ncfgs $ \ncfg -> do
+      let tcp = nListenTCP ncfg
+      let udp = nListenUDP ncfg
+
+      forM_ (nMarks ncfg) $ \nmark -> do
+        let udpRule  = [I eth, P (UDP (Just 53)), MARK (MarkEQ nmark), J (REDIRECT udp)]
+        let tcpRule  = [I eth, P (TCP (Just 53)), MARK (MarkEQ nmark), J (REDIRECT tcp)]
+        insertRule t c Nothing udpRule
+        insertRule t c Nothing tcpRule
+
+    insertRule t c Nothing (J RETURN)
 
 main = do
 
@@ -128,12 +176,8 @@ main = do
 
   runApp cfg $ do
 
-    insertChain "mangle" "PREROUTING" Nothing
-    insertChain "mangle" "PREROUTING" Nothing
-    insertChain "mangle" "PREROUTING" Nothing
-    insertChain "mangle" "PREROUTING" Nothing
-    insertChain "mangle" "PREROUTING" Nothing
-    insertChain "mangle" "PREROUTING" Nothing
+    insertChain "filter" "INPUT" (Just 1) acceptDNS
+    insertChain "nat" "PREROUTING" Nothing dnatDNS
 
     liftIO $ threadDelay (600*1000000)
 
