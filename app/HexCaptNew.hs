@@ -29,6 +29,7 @@ data ChainRef = ChainRef TableName ChainName ChainName
                 deriving (Eq,Ord,Show)
 
 data AppEnv = AppEnv { _chainTrack :: TVar (S.Set ChainRef)
+                     , _cfg        :: HexCaptCfg
                      }
 
 makeLenses ''AppEnv
@@ -65,12 +66,13 @@ runAppT :: (Functor m, Monad m, MonadIO m, MonadMask m)
 runAppT env (App m) = snd <$> execRWST m env def
 
 runApp :: (Functor m, Monad m, MonadIO m, MonadMask m)
-       => App m ()
+       => HexCaptCfg
+       -> App m ()
        -> m ()
 
-runApp m = do
+runApp cfg m = do
   track <- liftIO $ newTVarIO (S.empty)
-  let env = AppEnv track
+  let env = AppEnv track cfg
   runAppT env m `finally` (finalizeAll track)
   where
     finalizeAll track = do
@@ -116,22 +118,15 @@ insertChain t c mpos = do
   nm <- genChainName t c
   liftIO $ putStrLn  [qq|inserting new chain $nm|]
   liftIO $ Iptables.createChain t nm
-  liftIO $ Iptables.insertRule t c Nothing  ([qq|-j $nm|]::String)
---   liftIO $ Iptables.insertRule t c (Just 1) ([qq|-j $nm|]::String)
+  liftIO $ Iptables.insertRule t c mpos ([qq|-j $nm|]::String)
   trackChain t c nm
   return nm
-
-
-
-
 
 main = do
 
   cfg <- loadConfig
 
-  print cfg
-
-  runApp $ do
+  runApp cfg $ do
 
     insertChain "mangle" "PREROUTING" Nothing
     insertChain "mangle" "PREROUTING" Nothing

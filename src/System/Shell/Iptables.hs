@@ -20,9 +20,13 @@ createChain t c = sh $ do
 
 deleteChain :: TableName -> ChainName -> IO ()
 deleteChain t c = sh $ do
-  shell [qq|iptables -t $t -F $c|] empty
+  liftIO $ flushChain t c
   shell [qq|iptables -t $t -X $c|] empty
   return ()
+
+flushChain :: TableName -> ChainName -> IO ()
+flushChain t c = sh $ do
+  shell [qq|iptables -t $t -F $c|] empty
 
 insertRule :: ShowQ a
            => TableName
