@@ -7,6 +7,7 @@
 {-# Language RecordWildCards #-}
 {-# Language TemplateHaskell #-}
 {-# Language TypeFamilies #-}
+{-# Language TypeOperators #-}
 {-# LANGUAGE UndecidableInstances #-}
 
 module Main where
@@ -20,6 +21,7 @@ import Control.Lens
 import Control.Monad.Trans.Control
 import Control.Monad.Base
 import Control.Exception.Lifted
+import Control.Monad.Except
 -- import Control.Monad.Catch
 import Control.Monad.RWS
 import Data.Default
@@ -30,64 +32,15 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Set as S
 import Text.InterpolatedString.Perl6 (qc,qq,q)
 import Turtle hiding (view)
+import Servant.Server
 
+import HEXCapt.Types
 import HEXCapt.Config
+import HEXCapt.Server
+
 import qualified System.Shell.Iptables as Iptables
 import System.Shell.Iptables
 
-data ChainRef = ChainRef TableName ChainName ChainName
-                deriving (Eq,Ord,Show)
-
-data AppEnv = AppEnv { _chainTrack :: TVar (S.Set ChainRef)
-                     , _actions    :: TVar [ThreadId]
-                     , _config     :: HexCaptCfg
-                     }
-
-makeLenses ''AppEnv
-
-data AppState = AppState { _chainNum   :: Int
-                         }
-
-makeLenses ''AppState
-
-instance Default AppState where
-  def = AppState { _chainNum = 0
-                 }
-
-newtype App m a = App { unApp :: RWST AppEnv () AppState m a }
-                  deriving ( Functor
-                           , Applicative
-                           , Monad
-                           , MonadReader AppEnv
-                           , MonadState  AppState
-                           , MonadWriter ()
-                           , MonadRWS AppEnv () AppState
---                            , MonadThrow
---                            , MonadCatch
---                            , MonadMask
-                           , MonadTrans
-                           , MonadIO
-                           )
-
-instance MonadBase b m => MonadBase b (App m) where
-  liftBase = liftBaseDefault
-
-instance MonadTransControl App where
-  type StT App a = StT (RWST AppEnv () AppState) a
-  liftWith = defaultLiftWith App unApp
-  restoreT = defaultRestoreT App
-
-instance MonadBaseControl b m => MonadBaseControl b (App m) where
-  type StM (App m) a = ComposeSt App m a
-  liftBaseWith = defaultLiftBaseWith
-  restoreM = defaultRestoreM
-
-runAppT :: (Monad m)
-        => AppEnv
-        -> App m ()
-        -> m ()
-
-runAppT env (App m) = snd <$> execRWST m env def
 
 runApp :: (MonadIO m, MonadBaseControl IO (App m))
        => HexCaptCfg
@@ -147,9 +100,12 @@ insertChain :: (MonadIO m)
 
 insertChain t c mpos m = do
   nm <- genChainName t c
-  liftIO $ putStrLn  [qq|inserting new chain $nm|]
-  liftIO $ Iptables.createChain t nm
-  liftIO $ Iptables.insertRule t c mpos ([qq|-j $nm|]::String)
+
+  liftIO $ do
+    putStrLn  [qq|inserting new chain $nm|]
+    Iptables.createChain t nm
+    Iptables.insertRule t c mpos ([qq|-j $nm|]::String)
+
   x <- m t nm
   trackChain t c nm
   return x
@@ -200,13 +156,13 @@ dnatDNS t c = do
 
     insertRule t c Nothing (J RETURN)
 
-
 spawn :: MonadIO m => MonadBaseControl IO (App m) => App m () -> App m ()
 spawn action = do
   tt <- asks (view actions)
   tid <- asyncThreadId <$> async action
   liftIO $ atomically $ modifyTVar tt ((:) tid)
   return ()
+
 
 main = do
 

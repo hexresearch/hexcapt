@@ -38,6 +38,8 @@ library
 executable hexcapt
   hs-source-dirs:      app
 
+  other-modules:       HEXCapt.Server, HEXCapt.Types
+
   main-is:             HexCaptNew.hs
   ghc-options:         -Wall -threaded -rtsopts -with-rtsopts=-N
 
