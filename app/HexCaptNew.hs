@@ -8,9 +8,12 @@
 
 module Main where
 
+import Control.Concurrent.Async
+import Control.Concurrent.Event (Event)
 import Control.Concurrent.STM
 import Control.Concurrent (threadDelay)
 import Control.Lens
+import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.RWS
 import Data.Default
@@ -21,6 +24,7 @@ import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Set as S
 import Text.InterpolatedString.Perl6 (qc,qq,q)
 import Turtle hiding (view)
+
 import HEXCapt.Config
 import qualified System.Shell.Iptables as Iptables
 import System.Shell.Iptables
@@ -29,6 +33,7 @@ data ChainRef = ChainRef TableName ChainName ChainName
                 deriving (Eq,Ord,Show)
 
 data AppEnv = AppEnv { _chainTrack :: TVar (S.Set ChainRef)
+                     , _actions    :: TVar [Async ()]
                      , _config     :: HexCaptCfg
                      }
 
@@ -54,6 +59,7 @@ newtype App  m a = App (RWST AppEnv () AppState m a)
                             , MonadThrow
                             , MonadCatch
                             , MonadMask
+                            , MonadBase
                             , MonadIO
                             )
 
@@ -72,7 +78,8 @@ runApp :: (Functor m, Monad m, MonadIO m, MonadMask m)
 
 runApp cfg m = do
   track <- liftIO $ newTVarIO (S.empty)
-  let env = AppEnv track cfg
+  as    <- liftIO $ newTVarIO []
+  let env = AppEnv track as cfg
   runAppT env m `finally` (finalizeAll track)
   where
     finalizeAll track = do
@@ -170,11 +177,22 @@ dnatDNS t c = do
 
     insertRule t c Nothing (J RETURN)
 
+
+spawn :: MonadIO m => m () -> App m ()
+spawn action = do
+--   a <- liftIO $ async action
+  error "FUCK"
+
 main = do
 
   cfg <- loadConfig
 
   runApp cfg $ do
+
+    spawn $ forever $ do
+      liftIO $ do
+        putStrLn "JOPA"
+        threadDelay  $ 10*1000000
 
     insertChain "filter" "INPUT" (Just 1) acceptDNS
     insertChain "nat" "PREROUTING" Nothing dnatDNS
