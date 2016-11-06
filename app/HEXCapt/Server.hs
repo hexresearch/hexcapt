@@ -1,15 +1,46 @@
+{-# Language GeneralizedNewtypeDeriving #-}
 {-# Language OverloadedStrings #-}
 {-# Language QuasiQuotes, ExtendedDefaultRules #-}
+{-# Language TypeOperators #-}
 module HEXCapt.Server where
 
-import Data.Monoid
+import Control.Lens
+import Control.Monad.Except
+import Control.Monad.Reader
+import Control.Monad.Trans.Except
 import Data.Attoparsec.Text
 import Data.Char (isHexDigit)
 import Data.List (nub,sort,intercalate)
+import Data.Monoid
+import Data.String(fromString)
+import Network.Wai
+import Network.Wai.Handler.Warp
+import qualified Control.Concurrent.Event as Event
+import Servant
 import Servant.Server
 import Text.InterpolatedString.Perl6 (qq)
 
 import Network.HEXCapt.API
+import HEXCapt.Config
+import HEXCapt.Types
+
+newtype CaptServT m a = CaptServT { unServ :: ReaderT AppEnv (ExceptT ServantErr m) a
+                                  } deriving ( Functor
+                                             , Applicative
+                                             , Monad
+                                             , MonadReader AppEnv
+                                             , MonadError ServantErr
+                                             , MonadIO
+                                             )
+
+type CaptServ api = ServerT api (CaptServT IO)
+
+runCaptServT :: Monad m => AppEnv -> CaptServT m a -> (ExceptT ServantErr m) a
+runCaptServT env m = runReaderT (unServ m) env
+
+captToEither :: AppEnv -> CaptServT IO :~> ExceptT ServantErr IO
+captToEither env = Nat $ \x -> runCaptServT env x
+
 
 macParser :: Parser String
 macParser = do
@@ -23,18 +54,28 @@ macParser = do
           char ':'
           return m
 
--- serveSetAccess :: HexCaptCfg -> TVar MacDB -> Event -> Server HEXCaptAPI
--- serveSetAccess cfg db ev (Just mac') (Just mark) = do
---   case (parseOnly macParser mac')  of
---     Left _  -> throwError err404
---     Right m -> do
---       liftIO $ atomically $ modifyTVar' db (macDbUpdate m mark)
---       liftIO $ Event.signal ev
---       return [qq|set access $m $mark ok|]
 
--- serveSetAccess _ _ _ _ _ = throwError err404
+runAPI :: AppEnv -> IO ()
+runAPI env = do
+  let cfg = view config env
 
--- webapp :: HexCaptCfg -> TVar MacDB -> Event -> Application
--- webapp cfg db ev = do
---   serve (Proxy :: Proxy HEXCaptAPI) (serveSetAccess cfg db ev)
+  let port = hListen cfg
+  let bind = hBind cfg
 
+  let settings = (setPort port  . setHost (fromString bind)) defaultSettings
+
+  runSettings settings (serve (Proxy :: Proxy HEXCaptAPI) (serveAPI env))
+
+serveAPI :: AppEnv -> Server HEXCaptAPI
+serveAPI env = enter (captToEither env) serveSetAccess
+
+serveSetAccess :: CaptServ HEXCaptAPI
+serveSetAccess (Just mac') (Just mark) = do
+  case (parseOnly macParser mac')  of
+    Left _  -> throwError err500
+    Right m -> do
+      env <- ask
+      liftIO $ updateMarkIO env m mark
+      return [qq|set access $m $mark ok|]
+
+serveSetAccess _ _ = throwError err404

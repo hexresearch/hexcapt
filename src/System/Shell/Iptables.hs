@@ -22,15 +22,24 @@ data Proto = UDP (Maybe Int)
 
 data MarkOpt = MarkEQ Int
 
+data MacPart = MacSrc String
+
+data MacOpt = MacEQ MacPart
+
 data IPTablesCmd = RETURN
                  | ACCEPT
                  | REDIRECT Int
+                 | SETMARK Int
                  | CONNMARK ConnmarkOpt
 
 data IPTablesOpt =   J IPTablesCmd
                    | I String
                    | P Proto
                    | MARK MarkOpt
+                   | MAC MacOpt
+
+instance ShowQ MacOpt where
+  showQ (MacEQ (MacSrc x)) = [qq|--mac-source $x|]
 
 instance ShowQ MarkOpt where
   showQ (MarkEQ x) = [qq|--mark $x|]
@@ -56,12 +65,14 @@ instance ShowQ IPTablesCmd where
   showQ ACCEPT = [qq|ACCEPT|]
   showQ (REDIRECT n) = [qq|REDIRECT --to-port $n|]
   showQ (CONNMARK x) = [qq|CONNMARK $x|]
+  showQ (SETMARK x) = [qq|MARK --set-mark $x |]
 
 instance ShowQ IPTablesOpt where
   showQ (I x) = [qq|-i $x|]
   showQ (J x) = [qq|-j $x|]
   showQ (P x) = [qq|-p $x|]
   showQ (MARK x) = [qq|-m mark $x |]
+  showQ (MAC x) = [qq|-m mac $x |]
 
 createChain :: TableName -> ChainName -> IO ()
 createChain t c = sh $ do
