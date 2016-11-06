@@ -19,7 +19,9 @@ import Data.Digits
 import qualified Data.Set as S
 import qualified Data.ByteString.Lazy as LBS
 import Text.InterpolatedString.Perl6 (qc,qq,q)
+import Turtle hiding (view)
 
+import HEXCapt.Config
 import qualified System.Shell.Iptables as Iptables
 import System.Shell.Iptables (ChainName, TableName)
 
@@ -119,7 +121,15 @@ insertChain t c mpos = do
   trackChain t c nm
   return nm
 
+
+
+
+
 main = do
+
+  cfg <- loadConfig
+
+  print cfg
 
   runApp $ do
 
