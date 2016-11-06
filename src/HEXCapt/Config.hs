@@ -26,7 +26,15 @@ import qualified Data.Text as T
 import Text.InterpolatedString.Perl6 (qc,qq,q)
 import Turtle hiding (Parser)
 
+import Debug.Trace
+
 import HEXCapt.Types
+
+data Redirect = Redirect String Int Int
+                deriving (Show, Eq, Generic, Data, Typeable)
+
+data Forward = Forward String Int
+                deriving (Show, Eq, Generic, Data, Typeable)
 
 data NDNProxyCfg = NDNProxyCfg { nListenTCP :: Int
                                , nListenUDP :: Int
@@ -47,6 +55,8 @@ data HexCaptCfg = HexCaptCfg { hIputIface :: String
 
 data HexCaptMode = HexCaptMode { hmMarks :: [Int]
                                , hmLocalDomains :: [String]
+                               , hmRedirects :: [Redirect]
+                               , hmFwd :: [Forward]
                                } deriving (Show,Eq,Generic,Data,Typeable)
 
 data HexCaptModeList = HexCaptModeList [HexCaptMode]
@@ -63,6 +73,8 @@ instance FromJSON HexCaptMode where
   parseJSON (Object v) = HexCaptMode
                            <$> ((v .: "mode") >>= (.: "marks"))
                            <*> ((v .: "mode") >>= (.: "local-domains"))
+                           <*> ((v .: "mode") >>= (.:? "redirect") >>= parseRedirects)
+                           <*> ((v .: "mode") >>= (.:? "forward") >>= parseForwards)
   parseJSON _ = mzero
 
 instance FromJSON NDNProxyCfgList where
@@ -80,6 +92,20 @@ instance FromJSON NDNProxyCfg where
                            <*> ((v .: "instance") >>= (.:? "static-a") >>= parseStaticAddr)
 
   parseJSON _          = mzero
+
+parseForwards :: Maybe Value -> Parser [Forward]
+parseForwards (Just v) = do
+  vs <- parseJSON v :: Parser [(String, Int)]
+  return $ fmap (\(p,f) -> Forward p f) vs
+
+parseForwards _ = return []
+
+parseRedirects :: Maybe Value -> Parser [Redirect]
+parseRedirects (Just v) = do
+  vs <- parseJSON v :: Parser [(String, Int, Int)]
+  return $ fmap (\(p,f,t) -> Redirect p f t) vs
+
+parseRedirects _ = return []
 
 parseUpstreamDNS :: Maybe Value -> Parser [DNSServer]
 

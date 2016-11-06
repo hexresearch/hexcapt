@@ -26,8 +26,11 @@ data MacPart = MacSrc String
 
 data MacOpt = MacEQ MacPart
 
+data CtStateOpt = RELATED | ESTABLISHED | NEW
+
 data IPTablesCmd = RETURN
                  | ACCEPT
+                 | DROP
                  | REDIRECT Int
                  | SETMARK Int
                  | CONNMARK ConnmarkOpt
@@ -37,6 +40,12 @@ data IPTablesOpt =   J IPTablesCmd
                    | P Proto
                    | MARK MarkOpt
                    | MAC MacOpt
+                   | CTSTATE [CtStateOpt]
+
+instance ShowQ CtStateOpt where
+  showQ RELATED = "RELATED"
+  showQ ESTABLISHED = "ESTABLISHED"
+  showQ NEW = "NEW"
 
 instance ShowQ MacOpt where
   showQ (MacEQ (MacSrc x)) = [qq|--mac-source $x|]
@@ -45,13 +54,13 @@ instance ShowQ MarkOpt where
   showQ (MarkEQ x) = [qq|--mark $x|]
 
 instance ShowQ Proto where
-  showQ (UDP dst) = [qq|udp --dport $d|]
+  showQ (UDP dst) = [qq|udp $d|]
     where d :: String
-          d = maybe "" show dst
+          d = maybe "" (\n -> [qq|--dport $n|]) dst
 
-  showQ (TCP dst) = [qq|tcp --dport $d|]
+  showQ (TCP dst) = [qq|tcp $d|]
     where d :: String
-          d = maybe "" show dst
+          d = maybe "" (\n -> [qq|--dport $n|]) dst
 
 instance ShowQ [IPTablesOpt] where
   showQ ops = intercalate [qq| |] (fmap showQ ops)
@@ -63,6 +72,7 @@ instance ShowQ ConnmarkOpt where
 instance ShowQ IPTablesCmd where
   showQ RETURN = [qq|RETURN|]
   showQ ACCEPT = [qq|ACCEPT|]
+  showQ DROP   = [qq|DROP|]
   showQ (REDIRECT n) = [qq|REDIRECT --to-port $n|]
   showQ (CONNMARK x) = [qq|CONNMARK $x|]
   showQ (SETMARK x) = [qq|MARK --set-mark $x |]
@@ -73,21 +83,23 @@ instance ShowQ IPTablesOpt where
   showQ (P x) = [qq|-p $x|]
   showQ (MARK x) = [qq|-m mark $x |]
   showQ (MAC x) = [qq|-m mac $x |]
+  showQ (CTSTATE cs) = [qq|-m conntrack --ctstate $ss|]
+    where ss = intercalate "," (map showQ cs)
 
 createChain :: TableName -> ChainName -> IO ()
 createChain t c = sh $ do
-  shell [qq|iptables -t $t -N $c|] empty
+  shell [qq|iptables -w -t $t -N $c|] empty
   return ()
 
 deleteChain :: TableName -> ChainName -> IO ()
 deleteChain t c = sh $ do
   liftIO $ flushChain t c
-  shell [qq|iptables -t $t -X $c|] empty
+  shell [qq|iptables -w -t $t -X $c|] empty
   return ()
 
 flushChain :: TableName -> ChainName -> IO ()
 flushChain t c = sh $ do
-  shell [qq|iptables -t $t -F $c|] empty
+  shell [qq|iptables -w -t $t -F $c|] empty
 
 insertRule :: ShowQ a
            => TableName
@@ -97,7 +109,8 @@ insertRule :: ShowQ a
            -> IO ()
 insertRule t c mp x = sh $ do
   let app = maybe ([qq|-A $c|]) (\p -> [qq|-I $c $p|]) mp :: String
-  shell [qc|iptables -t {t} {app} {x} |] empty
+  shell [qc|iptables -w -t {t} {app} {x} |] empty
+--   stdout [qc|iptables -w -t {t} {app} {x} |]
 
 
 unlinkChain :: TableName
@@ -116,6 +129,7 @@ unlinkChain t c n = sh $ go
         Just s  -> do
           case T.split isSpace s of
             (i:_) -> do
-              shell [qq|iptables -t $t -D $c $i|] empty
+              stdout [qq|REMOVING $i|]
+              shell [qq|iptables -w -t $t -D $c $i|] empty
               go
             _ -> return ()

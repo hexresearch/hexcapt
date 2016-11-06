@@ -67,6 +67,7 @@ runApp cfg m = do
 
       forM_ ts $ \(ChainRef t c n) -> do
         liftIO $ do
+          putStrLn [qq|delete $t $c $n|]
           Iptables.unlinkChain t c n
           Iptables.deleteChain t n
 
@@ -171,7 +172,7 @@ dnatDNS t c = do
 
   liftIO $ do
 
-    insertRule t c Nothing [I eth, J (CONNMARK RESTORE)]
+    insertRule t c Nothing [J (CONNMARK RESTORE)]
 
     forM_ ncfgs $ \ncfg -> do
       let tcp = nListenTCP ncfg
@@ -187,7 +188,71 @@ dnatDNS t c = do
 
 dnatExtra :: MonadIO m => TableName -> ChainName -> App m ()
 dnatExtra t c = do
+  cfg <- asks (view config)
+  let eth = hIputIface cfg
+
   liftIO $ putStrLn [qq|Create extra DNAT|]
+
+  let modes = [ m | m@(HexCaptMode{hmMarks=(_:_)}) <- universeBi cfg ]
+
+  liftIO $ insertRule t c Nothing [J (CONNMARK RESTORE)]
+
+  forM_ modes $ \mo -> do
+
+    let ms = hmMarks mo
+    let rr = hmRedirects mo
+
+    forM_ [ (m,r) | m <- ms, r <- rr ] $ \(m,r) -> do
+      case r of
+        Redirect "tcp" from to -> do
+          let rule = [I eth, P (TCP (Just from)), MARK (MarkEQ m), J (REDIRECT to)]
+          liftIO $ insertRule t c Nothing rule
+
+        Redirect "udp" from to -> do
+          let rule = [I eth, P (UDP (Just from)), MARK (MarkEQ m), J (REDIRECT to)]
+          liftIO $ insertRule t c Nothing rule
+
+        Redirect s _ _ -> liftIO $ putStrLn [qq|Unknown protocol: $s |]
+
+      liftIO $ putStrLn [qq| mark: $m redir: $r |]
+
+  liftIO $ insertRule t c Nothing (J RETURN)
+
+fwdFilter :: MonadIO m => TableName -> ChainName -> App m ()
+fwdFilter t c = do
+
+  cfg <- asks (view config)
+  let eth = hIputIface cfg
+
+  liftIO $ putStrLn [qq|Create FORWARD|]
+
+  liftIO $ insertRule t c Nothing [J (CONNMARK RESTORE)]
+
+  let modes = [ m | m@(HexCaptMode{hmMarks=(_:_)}) <- universeBi cfg ]
+
+  forM_ modes $ \mo -> do
+
+    let ms = hmMarks mo
+    let rr = hmFwd mo
+
+    forM_ [ (m,r) | m <- ms, r <- rr ] $ \(m,r) -> do
+      case r of
+        Forward "tcp" p -> do
+          let rule = [I eth, P (TCP (Just p)), MARK (MarkEQ m), J ACCEPT]
+          liftIO $ insertRule t c Nothing rule
+
+        Forward "udp" p -> do
+          let rule = [I eth, P (UDP (Just p)), MARK (MarkEQ m), J ACCEPT]
+          liftIO $ insertRule t c Nothing rule
+
+        Forward s _ -> liftIO $ putStrLn [qq|Unknown protocol: $s |]
+
+  liftIO $ do
+    insertRule t c Nothing [P (TCP Nothing), CTSTATE [RELATED,ESTABLISHED], J ACCEPT]
+    insertRule t c Nothing (J DROP)
+    insertRule t c Nothing (J RETURN)
+
+  return ()
 
 spawn :: MonadIO m => MonadBaseControl IO (App m) => App m () -> App m ()
 spawn action = do
@@ -251,6 +316,7 @@ main = do
     insertChain "filter" "INPUT" (Just 1) acceptDNS
     insertChain "nat" "PREROUTING" Nothing dnatDNS
     insertChain "nat" "PREROUTING" Nothing dnatExtra
+    insertChain "filter" "FORWARD" Nothing fwdFilter
 
     trackMangle <- liftIO $ newTVarIO []
     forever $ do

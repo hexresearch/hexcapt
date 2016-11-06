@@ -10,6 +10,7 @@ local-ip:  192.168.2.1
 modes:
     - mode:
         marks: []
+
         local-domains:
             - "clients3.google.com"
             - "connectivitycheck.android.com"
@@ -23,8 +24,27 @@ modes:
             - "www.tutu.tv"
             - "www.video.tutu.tv"
 
+
+    - mode:
+        marks: [0]
+        redirect:
+            - [tcp, 80, 81]
+
+        local-domains: []
+
+    - mode:
+        marks: [2]
+        local-domains: []
+        forward:
+            - [tcp, 443]
+            - [tcp, 80]
+
     - mode:
         marks: [1]
+
+        forward:
+            - [tcp, 443]
+
         local-domains:
             - "*.1e100.net"
             - "*.1e200.net"
