@@ -1,10 +1,12 @@
 {-# Language DeriveGeneric, DeriveDataTypeable #-}
 {-# Language FlexibleContexts #-}
 {-# Language GeneralizedNewtypeDeriving #-}
+{-# Language MultiParamTypeClasses #-}
 {-# Language OverloadedStrings #-}
 {-# Language QuasiQuotes, ExtendedDefaultRules #-}
 {-# Language RecordWildCards #-}
 {-# Language TemplateHaskell #-}
+{-# Language TypeFamilies #-}
 
 module Main where
 
@@ -13,6 +15,7 @@ import Control.Concurrent.Event (Event)
 import Control.Concurrent.STM
 import Control.Concurrent (threadDelay)
 import Control.Lens
+import Control.Monad.Trans.Control
 import Control.Monad.Base
 import Control.Monad.Catch
 import Control.Monad.RWS
@@ -48,32 +51,38 @@ instance Default AppState where
   def = AppState { _chainNum = 0
                  }
 
-newtype App  m a = App (RWST AppEnv () AppState m a)
-                   deriving ( Functor
-                            , Applicative
-                            , Monad
-                            , MonadReader AppEnv
-                            , MonadState  AppState
-                            , MonadWriter ()
-                            , MonadRWS AppEnv () AppState
-                            , MonadThrow
-                            , MonadCatch
-                            , MonadMask
-                            , MonadBase
-                            , MonadIO
-                            )
+newtype App a = App (RWST AppEnv () AppState IO a)
+                deriving ( Functor
+                         , Applicative
+                         , Monad
+                         , MonadReader AppEnv
+                         , MonadState  AppState
+                         , MonadWriter ()
+                         , MonadRWS AppEnv () AppState
+                         , MonadThrow
+                         , MonadCatch
+                         , MonadMask
+                         , MonadIO
+                         )
 
 
-runAppT :: (Functor m, Monad m, MonadIO m, MonadMask m)
-        => AppEnv
-        -> App m ()
-        -> m ()
+-- instance (MonadBase m, MonadIO m) => MonadBaseControl IO (App m) where
+--     type StM (App m) a = a
 
+-- instance MonadBaseControl IO App where
+--     newtype StM App a = StApp { unStApp :: StM (ErrorT String IO) a }
+
+--     liftBaseWith f = App . liftBaseWith $ \r -> f $ liftM StApp . r . undefined
+
+--     restoreM       = App . restoreM . unStApp
+
+
+runAppT :: AppEnv -> App () -> IO ()
 runAppT env (App m) = snd <$> execRWST m env def
 
 runApp :: (Functor m, Monad m, MonadIO m, MonadMask m)
        => HexCaptCfg
-       -> App m ()
+       -> App ()
        -> m ()
 
 runApp cfg m = do
@@ -88,7 +97,7 @@ runApp cfg m = do
         liftIO $ Iptables.unlinkChain t c n
         liftIO $ Iptables.deleteChain t n
 
-newObj :: Monad m => App m Int
+newObj :: Monad m => App Int
 newObj = do
   n <- gets (view chainNum)
   modify (over chainNum succ)
@@ -97,7 +106,7 @@ newObj = do
 genChainName :: (MonadIO m)
              => TableName
              -> ChainName
-             -> App m ChainName
+             -> App ChainName
 
 genChainName t c = do
   let alph = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ0123456789" :: String
@@ -106,11 +115,10 @@ genChainName t c = do
   let digs = fmap ((!!) alph . fromIntegral) $ digits alphLen $ integerDigest $ sha1 [qq|$t$c$n|]
   return $ "hx" <> (take 20 digs)
 
-trackChain :: (MonadIO m)
-             => TableName
+trackChain ::   TableName
              -> ChainName
              -> ChainName
-             -> App m ()
+             -> App ()
 trackChain t c n = do
   tv <- asks (view chainTrack)
   liftIO $ atomically $ modifyTVar tv $ S.insert (ChainRef t c n)

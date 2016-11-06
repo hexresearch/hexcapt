@@ -29,7 +29,6 @@ library
                      , mtl
                      , servant
                      , text
-                     , transformers-base
                      , turtle
                      , uniplate 
                      , yaml
@@ -57,6 +56,7 @@ executable hexcapt
                      , foldl
                      , interpolatedstring-perl6
                      , lens
+                     , monad-control
                      , mtl
                      , process
                      , servant
@@ -65,6 +65,7 @@ executable hexcapt
                      , stm
                      , text
                      , transformers
+                     , transformers-base
                      , turtle
                      , uniplate
                      , wai
