@@ -4,6 +4,7 @@
 {-# Language QuasiQuotes, ExtendedDefaultRules #-}
 module HEXCapt.Config where
 
+import Control.Exception (tryJust)
 import Control.Monad
 import Control.Monad.Reader
 import Data.Aeson
@@ -23,6 +24,7 @@ import qualified Data.List as L
 import qualified Data.Map as M
 import qualified Data.Set as S
 import qualified Data.Text as T
+import System.IO.Error (isDoesNotExistError)
 import Text.InterpolatedString.Perl6 (qc,qq,q)
 import Turtle hiding (Parser)
 
@@ -209,7 +211,12 @@ data RNorm = RNorm { resolvConf :: [DNSServer] }
 
 loadConfig :: IO HexCaptCfg
 loadConfig = do
-  homePath <- home
+  homePath' <-  tryJust (guard . isDoesNotExistError) home
+
+  let homePath = case homePath' of
+                  Left _  -> ""
+                  Right p -> p
+
   let hexCaptYaml = "hexcapt.yaml"
   let etcCfg = "/etc" </> hexCaptYaml
   let homeCfg = homePath </> hexCaptYaml
