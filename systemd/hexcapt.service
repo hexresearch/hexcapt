@@ -1,0 +1,14 @@
+[Unit]
+Description=hexcapt
+After=syslog.target
+
+[Service]
+Type=simple
+ExecStart=/usr/local/bin/hexcapt
+Restart=always
+RestartSec=1
+StandardOutput=journal
+
+[Install]
+WantedBy=multi-user.target
+
