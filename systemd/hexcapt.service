@@ -5,6 +5,7 @@ After=syslog.target
 [Service]
 Type=simple
 ExecStart=/usr/local/bin/hexcapt
+KillSignal=SIGINT
 Restart=always
 RestartSec=1
 StandardOutput=journal
