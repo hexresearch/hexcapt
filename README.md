@@ -171,7 +171,7 @@ Available options:
 
 ```
 
-# порт, на котором случает HTTP API
+# порт, на котором слушает HTTP API
 listen: 10011
 
 # порт, к которому биндится HTTP API
