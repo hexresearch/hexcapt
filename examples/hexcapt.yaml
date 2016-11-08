@@ -3,7 +3,7 @@ listen: 10011
 bind: 0.0.0.0
 sleep: 1.0
 
-input-iface: br0
+input-iface: enp1s0
 
 local-ip:  192.168.2.1
 
@@ -46,6 +46,10 @@ modes:
             - [tcp, 443]
 
         local-domains:
+            - "*.googlezip.net"
+            - "*.opera.com"
+            - "*.gstatic.com"
+            - "*.opera-mini.com"
             - "*.1e100.net"
             - "*.1e200.net"
             - "*.1september.ru"
