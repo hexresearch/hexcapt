@@ -151,9 +151,13 @@ Available options:
 - Скопировать ```nexcapt-client``` в ```/usr/bin``` или ```/usr/local/bin```
 - Скопировать ```hexcapt.yaml``` в ```/etc```
 - Скопировать ```ndnproxy``` в ```/usr/bin``` или ```/usr/local/bin```
+- Скопировать ```libndm.so``` в ```/usr/lib``` или ```/usr/local/lib```
+- Запустить ldconfig
+- Убедиться, что ```libndm.so``` доступен в ```LD_PATH```
 - Скопировать ```hexcapt.service``` в ```/etc/systemd/system```
 - Проверить, что путь к ```hexcapt``` в ```hexcapt.service``` соответствует реальному положению дел
 - Выполнить ```systemctl daemon-reload```
+- Выполнить ```systemctl enable hexcapt```
 
 ## Запуск 
 
