@@ -21,6 +21,11 @@ modes:
             - "video.tutu.tv"
             - "www.geowalk.ru"
             - "www.msftncsi.com"
+            - "www.msftncsi.com.edgesuite.net"
+            - "ipv6.msftncsi.com"
+            - "ipv6.msftncsi.com.edgesuite.net"
+            - "teredo.ipv6.microsoft.com"
+            - "teredo.ipv6.microsoft.com.nsatc.net"
             - "www.tutu.tv"
             - "www.video.tutu.tv"
 
@@ -41,6 +46,9 @@ modes:
 
     - mode:
         marks: [1]
+
+        redirect:
+            - [tcp, 80, 81]
 
         forward:
             - [tcp, 443]
@@ -98,7 +106,9 @@ modes:
             - "*.google.com"
             - "*.google.ru"
             - "*.googleusercontent.com"
+            - "*.googlezip.net"
             - "*.gosuslugi.ru"
+            - "*.gstatic.com"
             - "*.headhunter.com"
             - "*.headhunter.ru"
             - "*.hh.ru"
@@ -151,6 +161,8 @@ modes:
             - "*.ntv.ru"
             - "*.odnoklassniki.ru"
             - "*.ok.ru"
+            - "*.opera.com"
+            - "*.opera-mini.net"
             - "*.pinterest.com"
             - "*.planeta-online.tv"
             - "*.povarenok.ru"
@@ -221,6 +233,7 @@ ndnproxy:
         tcp-port: 10053
         udp-port: 10053
         marks: [0]
+        static-ttl: 0
         static-a:
             - ['*', 192.168.2.1]
 
@@ -231,6 +244,7 @@ ndnproxy:
         upstream-dns:
             '.' : ["192.168.2.1:10053", 8.8.8.8]
 
+        static-ttl: 10
         static-a: []
 
     - instance:
@@ -240,3 +254,5 @@ ndnproxy:
         upstream-dns:
             '.' : [8.8.8.8]
         static-a: []
+        static-ttl: 0
+

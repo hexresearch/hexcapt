@@ -16,6 +16,9 @@ class NDNProxyConfig a where
   ndnpStaticA :: a -> [(String,String)]
   ndnpStaticA _ = []
 
+  ndnpStaticTTL :: a -> Maybe Int
+  ndnpStaticTTL = const Nothing
+
 data DNSServer = DNSServer (Maybe String) String
                  deriving (Show,Eq,Generic,Data,Typeable)
 

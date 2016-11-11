@@ -43,6 +43,7 @@ data NDNProxyCfg = NDNProxyCfg { nListenTCP :: Int
                                , nMarks     :: [Int]
                                , nUpstreamDNS :: [DNSServer]
                                , nStaticA :: [StaticAddr]
+                               , nStaticTTL :: Maybe Int
                                } deriving (Show,Eq,Generic,Data,Typeable)
 
 data HexCaptCfg = HexCaptCfg { hIputIface :: String
@@ -92,6 +93,7 @@ instance FromJSON NDNProxyCfg where
                            <*> ((v .: "instance") >>= (.: "marks"))
                            <*> ((v .: "instance") >>= (.:? "upstream-dns") >>= parseUpstreamDNS)
                            <*> ((v .: "instance") >>= (.:? "static-a") >>= parseStaticAddr)
+                           <*> ((v .: "instance") >>= (.:? "static-ttl"))
 
   parseJSON _          = mzero
 
@@ -176,6 +178,8 @@ instance NDNProxyConfig NDNProxyCfg where
 
   ndnpStaticA = fmap (\(StaticAddr a b) -> (a,b)) . nStaticA
 
+  ndnpStaticTTL = nStaticTTL
+
   ndnpUpstreamDNS c = fmap trdns (nUpstreamDNS c)
     where trdns (DNSServer Nothing s)  = (s,".")
           trdns (DNSServer (Just p) s) = (s,p)
@@ -186,6 +190,9 @@ ndnproxyConfigAsText c = str
   where
     dnsServers = T.intercalate "\n" $ map dnss (ndnpUpstreamDNS c)
     dnss (s,d) = T.concat ["dns_server = ", (T.pack s), " ", (T.pack d)]
+
+    staticTTL :: String
+    staticTTL = maybe "" (\ttl -> [qq|static_ttl = $ttl|]) (ndnpStaticTTL c)
 
     staticA = T.intercalate "\n" $ map a (ndnpStaticA c)
     a (d,addr) = T.concat ["static_a = ", (T.pack d), " ", (T.pack addr)]
@@ -201,6 +208,7 @@ ban_threshold = {ndnpBanTreshhold c}
 {dnsServers}
 
 {staticA}
+{staticTTL}
 
 dns_tcp_port = {ndnpListenTCP c}
 dns_udp_port = {ndnpListenUDP c}
