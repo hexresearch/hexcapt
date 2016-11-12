@@ -32,8 +32,14 @@ import Debug.Trace
 
 import HEXCapt.Types
 
-data Redirect = Redirect String Int Int
-                deriving (Show, Eq, Generic, Data, Typeable)
+data Filter = DstAddr String
+              deriving (Show, Eq, Generic, Data, Typeable)
+
+data Redirect = Redirect { redirProto :: String
+                         , redirFrom  :: Int
+                         , redirTo    :: Int
+                         , redirFilt  :: [Filter]
+                         } deriving (Show, Eq, Generic, Data, Typeable)
 
 data Forward = Forward String Int
                 deriving (Show, Eq, Generic, Data, Typeable)
@@ -105,9 +111,27 @@ parseForwards (Just v) = do
 parseForwards _ = return []
 
 parseRedirects :: Maybe Value -> Parser [Redirect]
-parseRedirects (Just v) = do
-  vs <- parseJSON v :: Parser [(String, Int, Int)]
-  return $ fmap (\(p,f,t) -> Redirect p f t) vs
+parseRedirects (Just v) = mconcat <$> (parseJSON v >>= mapM pr)
+
+  where
+    pr :: [Value] -> Parser [Redirect]
+    pr [proto, p1, p2] = do
+      pproto <- parseJSON proto :: Parser String
+      pp1    <- parseJSON p1 :: Parser Int
+      pp2    <- parseJSON p2 :: Parser Int
+      return $ [Redirect pproto pp1 pp2 []]
+
+    pr [proto, p1, p2, rules] = do
+      redir <- pr [proto, p1, p2]
+      fs    <- (parseJSON rules :: Parser [(String, String)]) >>= mapM parseFilter
+      return [ Redirect pp ps pt fs | (Redirect pp ps pt _) <- redir ]
+
+    pr _ = mzero
+
+    parseFilter :: (String, String) -> Parser Filter
+    parseFilter ("dst", ip) = return (DstAddr ip)
+    parseFilter _ = mzero
+
 
 parseRedirects _ = return []
 

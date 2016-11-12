@@ -29,7 +29,6 @@ modes:
             - "www.tutu.tv"
             - "www.video.tutu.tv"
 
-
     - mode:
         marks: [0]
         redirect:
@@ -40,6 +39,10 @@ modes:
     - mode:
         marks: [2]
         local-domains: []
+
+        redirect:
+            - [tcp, 80, 82, [[dst, 192.168.2.1]]]
+
         forward:
             - [tcp, 443]
             - [tcp, 80]
@@ -233,7 +236,7 @@ ndnproxy:
         tcp-port: 10053
         udp-port: 10053
         marks: [0]
-        static-ttl: 0
+        static-ttl: 1
         static-a:
             - ['*', 192.168.2.1]
 
@@ -242,9 +245,9 @@ ndnproxy:
         udp-port: 10253
         marks: [2]
         upstream-dns:
-            '.' : ["192.168.2.1:10053", 8.8.8.8]
+            '.' : [8.8.8.8]
 
-        static-ttl: 10
+        static-ttl: 300
         static-a: []
 
     - instance:
@@ -254,5 +257,5 @@ ndnproxy:
         upstream-dns:
             '.' : [8.8.8.8]
         static-a: []
-        static-ttl: 0
+        static-ttl: 1
 

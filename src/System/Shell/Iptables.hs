@@ -4,9 +4,10 @@
 module System.Shell.Iptables where
 
 import Control.Monad
+import Data.Typeable
 import Data.Char (isSpace)
-import Data.Maybe
 import Data.List
+import Data.Maybe
 import qualified Control.Foldl as Fold
 import qualified Data.Text as T
 import Text.InterpolatedString.Perl6 (qq,qc,ShowQ(..))
@@ -17,8 +18,8 @@ type ChainName = String
 
 data ConnmarkOpt = SAVE | RESTORE
 
-data Proto = UDP (Maybe Int)
-           | TCP (Maybe Int)
+data Proto =   UDP (Maybe Int)
+             | TCP (Maybe Int)
 
 data MarkOpt = MarkEQ Int
 
@@ -38,9 +39,11 @@ data IPTablesCmd = RETURN
 data IPTablesOpt =   J IPTablesCmd
                    | I String
                    | P Proto
+                   | D String
                    | MARK MarkOpt
                    | MAC MacOpt
                    | CTSTATE [CtStateOpt]
+                   | STATE [CtStateOpt] -- TODO: ?
 
 instance ShowQ CtStateOpt where
   showQ RELATED = "RELATED"
@@ -81,9 +84,12 @@ instance ShowQ IPTablesOpt where
   showQ (I x) = [qq|-i $x|]
   showQ (J x) = [qq|-j $x|]
   showQ (P x) = [qq|-p $x|]
+  showQ (D x) = [qq|-d $x|]
   showQ (MARK x) = [qq|-m mark $x |]
   showQ (MAC x) = [qq|-m mac $x |]
   showQ (CTSTATE cs) = [qq|-m conntrack --ctstate $ss|]
+    where ss = intercalate "," (map showQ cs)
+  showQ (STATE cs) = [qq|-m state --state $ss|]
     where ss = intercalate "," (map showQ cs)
 
 createChain :: TableName -> ChainName -> IO ()
@@ -129,7 +135,6 @@ unlinkChain t c n = sh $ go
         Just s  -> do
           case T.split isSpace s of
             (i:_) -> do
-              stdout [qq|REMOVING $i|]
               shell [qq|iptables -w -t $t -D $c $i|] empty
               go
             _ -> return ()

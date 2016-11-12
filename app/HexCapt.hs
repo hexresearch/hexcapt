@@ -27,6 +27,7 @@ import Data.Default
 import Data.Digest.Pure.SHA
 import Data.Digits
 import Data.Generics.Uniplate.Operations
+import Data.List (nub,sort)
 import qualified Control.Concurrent.Event as Event
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as M
@@ -145,8 +146,13 @@ emptyChain t c = do
   liftIO $ Iptables.insertRule t c Nothing (J RETURN)
   return ()
 
-acceptDNS :: MonadIO m => TableName -> ChainName -> App m ()
-acceptDNS t c = do
+protoOf :: String -> Int -> [IPTablesOpt]
+protoOf "tcp" p = [P (TCP (Just p))]
+protoOf "udp" p = [P (UDP (Just p))]
+protoOf _ _     = []
+
+acceptPorts :: MonadIO m => TableName -> ChainName -> App m ()
+acceptPorts t c = do
 
   cfg <- asks (view config)
 
@@ -160,6 +166,17 @@ acceptDNS t c = do
       -- FIXME: local (redirected) only
       insertRule t c Nothing [P (UDP udp), J ACCEPT]
       insertRule t c Nothing [P (TCP tcp), J ACCEPT]
+
+  let redirs = nub $ sort $ [ (p,t) | (Redirect{redirProto = p, redirTo = t}) <- universeBi cfg ]
+  forM_  redirs $ \(p,to) -> do
+    let pp = protoOf p to
+    let st = case p of
+               "tcp" -> [STATE [NEW]]
+               _     -> []
+    let acc = [J ACCEPT]
+    let rules = mconcat [pp, st, acc]
+
+    liftIO $ insertRule t c Nothing rules
 
   liftIO $ insertRule t c Nothing (J RETURN)
 
@@ -204,19 +221,20 @@ dnatExtra t c = do
 
     forM_ [ (m,r) | m <- ms, r <- rr ] $ \(m,r) -> do
       case r of
-        Redirect "tcp" from to -> do
-          let rule = [I eth, P (TCP (Just from)), MARK (MarkEQ m), J (REDIRECT to)]
+        Redirect pp from to fs -> do
+          let iface  = [I eth]
+              proto  = protoOf pp from
+              filts  = fmap filterOf fs
+              mark   = [MARK (MarkEQ m)]
+              target = [J (REDIRECT to)]
+              rule   = mconcat [iface, proto, filts, mark, target]
+
           liftIO $ insertRule t c Nothing rule
-
-        Redirect "udp" from to -> do
-          let rule = [I eth, P (UDP (Just from)), MARK (MarkEQ m), J (REDIRECT to)]
-          liftIO $ insertRule t c Nothing rule
-
-        Redirect s _ _ -> liftIO $ putStrLn [qq|Unknown protocol: $s |]
-
-      liftIO $ putStrLn [qq| mark: $m redir: $r |]
 
   liftIO $ insertRule t c Nothing (J RETURN)
+
+  where
+    filterOf (DstAddr ip) = D ip
 
 fwdFilter :: MonadIO m => TableName -> ChainName -> App m ()
 fwdFilter t c = do
@@ -313,7 +331,7 @@ main = do
     forM_ ncfgs $ \ncfg -> spawn $ do
       liftIO $ procNDNProxy ncfg
 
-    insertChain "filter" "INPUT" (Just 1) acceptDNS
+    insertChain "filter" "INPUT" (Just 1) acceptPorts
     insertChain "nat" "PREROUTING" Nothing dnatDNS
     insertChain "nat" "PREROUTING" Nothing dnatExtra
     insertChain "filter" "FORWARD" Nothing fwdFilter
