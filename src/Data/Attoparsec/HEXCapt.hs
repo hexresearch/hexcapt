@@ -15,5 +15,5 @@ macParser = do
         macSep  = do
           m <- macPart
           char ':'
-          return m
+          return (fmap toLower m)
 

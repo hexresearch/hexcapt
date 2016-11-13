@@ -15,6 +15,7 @@ import Control.Lens
 import Control.Monad.Base
 import Control.Monad.RWS
 import Control.Monad.Trans.Control
+import Data.Char
 import Data.Default
 import qualified Control.Concurrent.Event as Event
 import qualified Data.Map as M
@@ -91,7 +92,7 @@ clearDirty = do
   liftIO $ atomically $ modifyTVar' tseq (const False)
 
 updateMarkIO :: AppEnv -> MAC -> Int -> IO ()
-updateMarkIO env mac mark = do
+updateMarkIO env mac' mark = do
 
   let tmarks = view marks env
   let tseq = view marksSeq env
@@ -104,6 +105,7 @@ updateMarkIO env mac mark = do
   Event.signal ev
 
   where
+    mac = fmap toLower mac'
     alt v = case (v,mark) of
       (_, 0) -> Nothing
       (_, n) -> Just n

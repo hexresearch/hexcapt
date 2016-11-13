@@ -23,6 +23,7 @@ import Control.Monad.Base
 import Control.Monad.Except
 import Control.Monad.RWS
 import Control.Monad.Trans.Control
+import Data.Char (toLower)
 import Data.Attoparsec.Text hiding (take,I,D)
 import Data.Default
 import Data.Digest.Pure.SHA
@@ -324,6 +325,7 @@ updateMangle track = do
 
         marks <- liftIO $ marksOf <$> listChain "mangle" c
 
+
         let allrules = marks == sort ms
 
         let fine = and [inserted, allrules]
@@ -352,7 +354,7 @@ markParser = do
   skipSpace
   _ <- string "0x"
   mark <- hexadecimal
-  return (mac, mark)
+  return (fmap toLower mac, mark)
 
 main = do
 
@@ -380,6 +382,9 @@ main = do
     forever $ do
         ok <- updateMangle trackMangle
         liftIO $ threadDelay (1*1000000)
+
+        when (not ok) $ do
+          liftIO $ putStrLn "updateMangle fail"
 
         when ok $ do
           liftIO $ Event.waitTimeout ev (floor (zzz*1000000))
