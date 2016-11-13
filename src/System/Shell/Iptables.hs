@@ -95,6 +95,7 @@ instance ShowQ IPTablesOpt where
 createChain :: TableName -> ChainName -> IO ()
 createChain t c = sh $ do
   shell [qq|iptables -w -t $t -N $c|] empty
+  shell [qq|iptables -w -t $t -F $c|] empty
   return ()
 
 deleteChain :: TableName -> ChainName -> IO ()
@@ -118,6 +119,16 @@ insertRule t c mp x = sh $ do
   shell [qc|iptables -w -t {t} {app} {x} |] empty
 --   stdout [qc|iptables -w -t {t} {app} {x} |]
 
+listChain :: TableName -> ChainName -> IO [Text]
+listChain t c = do
+    let cmd = inshell [qq|iptables -t $t -L $c|] empty
+    fold cmd Fold.list
+
+findChain :: TableName -> ChainName -> ChainName -> IO Bool
+findChain t c what = do
+    let cmd = (grep (has (fromString what)) (inshell [qq|iptables -t $t -L $c|] empty))
+    found <- fold cmd Fold.head
+    return $ isJust found
 
 unlinkChain :: TableName
             -> ChainName

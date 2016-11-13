@@ -17,12 +17,14 @@ library
   hs-source-dirs:      src
 
   exposed-modules:     Network.HEXCapt.API
+                     , Data.Attoparsec.HEXCapt
                      , HEXCapt.Config
                      , HEXCapt.Types
                      , System.Shell.Iptables
 
   build-depends:       base >= 4.7 && < 5
                      , aeson
+                     , attoparsec
                      , containers
                      , foldl
                      , interpolatedstring-perl6

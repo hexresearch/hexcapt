@@ -23,24 +23,29 @@ import Control.Monad.Base
 import Control.Monad.Except
 import Control.Monad.RWS
 import Control.Monad.Trans.Control
+import Data.Attoparsec.Text hiding (take,I,D)
 import Data.Default
 import Data.Digest.Pure.SHA
 import Data.Digits
+import Data.Either
 import Data.Generics.Uniplate.Operations
 import Data.List (nub,sort)
 import qualified Control.Concurrent.Event as Event
+import qualified Data.Attoparsec.Text as A
 import qualified Data.ByteString.Lazy as LBS
 import qualified Data.Map as M
 import qualified Data.Set as S
+import qualified Data.Text as T
 import Servant.Server
 import Text.InterpolatedString.Perl6 (qc,qq,q)
-import Turtle hiding (view)
+import Turtle hiding (view,Parser)
 
-import HEXCapt.Types
-import HEXCapt.Config
-import Application.HEXCapt.Types
-import Application.HEXCapt.Server
 import Application.HEXCapt.NDNProxy
+import Application.HEXCapt.Server
+import Application.HEXCapt.Types
+import Data.Attoparsec.HEXCapt
+import HEXCapt.Config
+import HEXCapt.Types
 
 import qualified System.Shell.Iptables as Iptables
 import System.Shell.Iptables
@@ -120,7 +125,6 @@ insertChain t c mpos m = do
   nm <- genChainName t c
 
   liftIO $ do
-    putStrLn  [qq|inserting new chain $nm|]
     Iptables.createChain t nm
     Iptables.insertRule t c mpos ([qq|-j $nm|]::String)
 
@@ -280,46 +284,75 @@ spawn action = do
   return ()
 
 
-updateMangle :: MonadIO m => TVar [ChainName] -> App m ()
+updateMangle :: MonadIO m => TVar (S.Set ChainName) -> App m Bool
 updateMangle track = do
   d <- isDirty
 
-  when d $ do
-    liftIO $ putStrLn "updating mangle"
+  if not d
+    then return True
+    else do
+      liftIO $ putStrLn "updating mangle"
 
-    cfg <- asks (view config)
-    let iface = hIputIface cfg
-    tms <- asks (view marks)
-    ms <- liftIO $ atomically $ readTVar tms
-    liftIO $ mapM_ print (M.toList ms)
+      cfg <- asks (view config)
+      let iface = hIputIface cfg
+      tms <- asks (view marks)
+      ms' <- liftIO $ atomically $ readTVar tms
+      let ms = M.toList ms'
 
-    insertChain "mangle" "PREROUTING" Nothing $ \t c -> do
-      liftIO $ putStrLn [qq|create new mangle table $t $c|]
+      insertChain "mangle" "PREROUTING" Nothing $ \t c -> do
+        liftIO $ putStrLn [qq|create new mangle table $t $c|]
 
-      forM_ (M.toList ms) $ \(mac,mark) -> do
-        let rule = [I iface, MAC (MacEQ (MacSrc mac)), (J (SETMARK mark))]
-        liftIO $ insertRule t c Nothing rule
+        forM_ ms $ \(mac,mark) -> do
+          let rule = [I iface, MAC (MacEQ (MacSrc mac)), (J (SETMARK mark))]
+          liftIO $ insertRule t c Nothing rule
 
-      liftIO $ insertRule t c Nothing [J (CONNMARK SAVE)]
-      liftIO $ insertRule t c Nothing [J RETURN]
+        liftIO $ insertRule t c Nothing [J (CONNMARK SAVE)]
+        liftIO $ insertRule t c Nothing [J RETURN]
 
-      -- FIXME:
-      -- remove only if actually removed
-      -- forM_ tracked blah-blach-blah
+        ts <- liftIO $ atomically $ readTVar track
 
-      tracked <- liftIO $ atomically $ do
-        r <- readTVar track
-        modifyTVar' track (const [])
-        return r
+        forM_ ts $ \chain -> do
+           removeChain "mangle" "PREROUTING" chain
+           here <- liftIO $ findChain "mangle" "PREROUTING" chain
+           when (not here) $ do
+             liftIO $ atomically $ modifyTVar' track (S.delete chain)
 
-      mapM_ (removeChain "mangle" "PREROUTING") tracked
+        liftIO $ atomically $ modifyTVar' track (S.insert c)
 
-      -- check if chain removed
+        -- clear dirty only if it's all ok
+        inserted <- liftIO $ findChain "mangle" "PREROUTING" c
 
-      liftIO $ atomically $ modifyTVar' track ((:) c)
+        marks <- liftIO $ marksOf <$> listChain "mangle" c
 
-    -- clear dirty only if it's all ok
-    clearDirty
+        let allrules = marks == sort ms
+
+        let fine = and [inserted, allrules]
+
+        when fine $ do
+          clearDirty
+
+        return fine
+
+  where
+    marksOf :: [Text] -> [(MAC, Int)]
+    marksOf ss = sort parsed
+      where
+        filtered = filter (T.isPrefixOf "MARK") ss
+        parsed = rights $ fmap (parseOnly markParser) filtered
+
+markParser :: Parser (MAC, Int)
+markParser = do
+  _ <- manyTill A.anyChar (string "MAC")
+  skipSpace
+  mac <- macParser
+  skipSpace
+  _ <- string "MARK"
+  skipSpace
+  _ <- string "set"
+  skipSpace
+  _ <- string "0x"
+  mark <- hexadecimal
+  return (mac, mark)
 
 main = do
 
@@ -343,12 +376,14 @@ main = do
     insertChain "nat" "PREROUTING" Nothing dnatExtra
     insertChain "filter" "FORWARD" Nothing fwdFilter
 
-    trackMangle <- liftIO $ newTVarIO []
+    trackMangle <- liftIO $ newTVarIO S.empty
     forever $ do
-        updateMangle trackMangle
-        -- FIXME: increase minimal delay in order to fix all that crap
+        ok <- updateMangle trackMangle
         liftIO $ threadDelay (1*1000000)
-        liftIO $ Event.waitTimeout ev (floor (zzz*1000000))
+
+        when ok $ do
+          liftIO $ Event.waitTimeout ev (floor (zzz*1000000))
+          return ()
 
     return ()
 

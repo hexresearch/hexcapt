@@ -20,6 +20,7 @@ import Servant
 import Servant.Server
 import Text.InterpolatedString.Perl6 (qq)
 
+import Data.Attoparsec.HEXCapt
 import Network.HEXCapt.API
 import HEXCapt.Config
 import Application.HEXCapt.Types
@@ -42,17 +43,6 @@ captToEither :: AppEnv -> CaptServT IO :~> ExceptT ServantErr IO
 captToEither env = Nat $ \x -> runCaptServT env x
 
 
-macParser :: Parser String
-macParser = do
-  ms <- count 5 macSep
-  ml <- macPart
-  return $ intercalate ":" (ms <> [ml])
-
-  where macPart = count 2 (satisfy (isHexDigit))
-        macSep  = do
-          m <- macPart
-          char ':'
-          return m
 
 
 runAPI :: AppEnv -> IO ()
