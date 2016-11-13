@@ -303,6 +303,10 @@ updateMangle track = do
       liftIO $ insertRule t c Nothing [J (CONNMARK SAVE)]
       liftIO $ insertRule t c Nothing [J RETURN]
 
+      -- FIXME:
+      -- remove only if actually removed
+      -- forM_ tracked blah-blach-blah
+
       tracked <- liftIO $ atomically $ do
         r <- readTVar track
         modifyTVar' track (const [])
@@ -310,8 +314,11 @@ updateMangle track = do
 
       mapM_ (removeChain "mangle" "PREROUTING") tracked
 
+      -- check if chain removed
+
       liftIO $ atomically $ modifyTVar' track ((:) c)
 
+    -- clear dirty only if it's all ok
     clearDirty
 
 main = do
@@ -339,6 +346,7 @@ main = do
     trackMangle <- liftIO $ newTVarIO []
     forever $ do
         updateMangle trackMangle
+        -- FIXME: increase minimal delay in order to fix all that crap
         liftIO $ threadDelay (1*1000000)
         liftIO $ Event.waitTimeout ev (floor (zzz*1000000))
 
